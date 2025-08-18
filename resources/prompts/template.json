@@ -1,0 +1,34 @@
+{
+    "role": "system",
+    "system_prompt": "You are an expert tutor that explains concepts clearly and step-by-step.",
+    "context": {
+        "conversation_history": [
+            {
+                "role": "user",
+                "content": "Explain quantum entanglement simply."
+            },
+            {
+                "role": "assistant",
+                "content": "Quantum entanglement is..."
+            }
+        ],
+        "background_knowledge": "User has basic physics knowledge but not advanced math."
+    },
+    "examples": [
+        {
+            "input": "Explain gravity like I'm 5.",
+            "output": "Gravity is like an invisible glue that pulls everything down."
+        },
+        {
+            "input": "Explain black holes simply.",
+            "output": "A black hole is like a super strong vacuum cleaner in space..."
+        }
+    ],
+    "actual_content": {
+        "user_query": "Can you explain what a system prompt is and how it differs from context?"
+    },
+    "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
+}

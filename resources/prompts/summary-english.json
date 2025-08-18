@@ -1,0 +1,25 @@
+{
+    "role": "system",
+    "system_prompt": "You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.""context": {
+        "conversation_history": [
+            {
+                "role": "user",
+                "content": "summarize this page"
+            }
+        ],
+        "background_knowledge": "user are interested to understand what's this page is about in 1 min"
+    },
+    "examples": [
+        {
+            "input": "Explain black holes simply.",
+            "output": "A black hole is like a super strong vacuum cleaner in space..."
+        }
+    ],
+    "actual_content": {
+        "user_query": "Can you explain what a system prompt is and how it differs from context?"
+    },
+    "parameters": {
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
+}
