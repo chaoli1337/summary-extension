@@ -31,23 +31,17 @@ A Chrome extension that extracts text from web pages and generates AI-powered su
 
 ## Screenshots
 
-> **Note**: Screenshots will be added soon. The extension features a modern, clean interface with three main views:
-
 ### Main Extension Interface
+![AI Page Summarizer Main Interface](screenshots/main-interface.png)
 *The main popup interface showing the current page summary with language selection and re-fetch options. Features a clean design with navigation tabs, page information, and AI-generated summaries with markdown formatting.*
 
 ### AI Model Configuration
+![AI Model Configuration](screenshots/ai-configuration.png)
 *Settings page for configuring AI model providers (Claude/OpenAI), API keys, and custom endpoints. Includes language settings and API testing functionality.*
 
 ### Extension Behavior & Cache Settings
+![Extension Behavior & Cache](screenshots/behavior-cache.png)
 *Configuration options for extension behavior, caching settings, and storage statistics. Allows users to customize auto-summarization, cache size, and expiry settings.*
-
-<!-- 
-Screenshots to be added:
-- screenshots/main-interface.png
-- screenshots/ai-configuration.png  
-- screenshots/behavior-cache.png
--->
 
 ## Technical Architecture
 
