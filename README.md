@@ -29,6 +29,20 @@ A Chrome extension that extracts text from web pages and generates AI-powered su
 - **Multiple Endpoints**: Support for custom API URLs
 - **Detached Window**: Open popup in a separate window for better workflow
 
+## Screenshots
+
+### Main Extension Interface
+![AI Page Summarizer Main Interface](screenshots/main-interface.png)
+*The main popup interface showing the current page summary with language selection and re-fetch options.*
+
+### AI Model Configuration
+![AI Model Configuration](screenshots/ai-configuration.png)
+*Settings page for configuring AI model providers, API keys, and endpoints.*
+
+### Extension Behavior & Cache Settings
+![Extension Behavior & Cache](screenshots/behavior-cache.png)
+*Configuration options for extension behavior, caching settings, and storage statistics.*
+
 ## Technical Architecture
 
 ### Frontend Stack
