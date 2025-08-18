@@ -4,9 +4,10 @@ import { marked } from 'marked';
 import './styles.css';
 
 interface Settings {
-  model: 'claude' | 'openai';
+  model: 'claude' | 'openai' | 'portkey';
   apiKey: string;
   apiUrl?: string;
+  virtualKey?: string;
   language: 'chinese' | 'english';
   cacheMaxSize?: number;
   cacheExpiryDays?: number;
@@ -26,6 +27,7 @@ const Popup: React.FC = () => {
   const [settings, setSettings] = useState<Settings>({ 
     model: 'claude', 
     apiKey: '', 
+    virtualKey: '',
     language: 'chinese' 
   });
   const [summary, setSummary] = useState<string>('');
@@ -34,7 +36,7 @@ const Popup: React.FC = () => {
   const [allTabs, setAllTabs] = useState<TabInfo[]>([]);
   const [cacheInfo, setCacheInfo] = useState<{fromCache: boolean; cachedAt?: number} | null>(null);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
-  const pollIntervalRef = useRef<number | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
 
   useEffect(() => {
@@ -301,6 +303,7 @@ const Popup: React.FC = () => {
           model: settings.model,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
+          virtualKey: settings.virtualKey,
           language: settings.language
         }
       });

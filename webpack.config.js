@@ -37,6 +37,15 @@ module.exports = {
   },
   resolve: {
     extensions: ['.tsx', '.ts', '.js'],
+    fallback: {
+      "fs": false,
+      "util": false,
+      "path": false,
+      "os": false,
+      "crypto": false,
+      "stream": false,
+      "buffer": false
+    }
   },
   output: {
     filename: '[name].js',

@@ -5,10 +5,10 @@ A Chrome extension that extracts text from web pages and generates AI-powered su
 ## Features
 
 ### 🤖 AI-Powered Summarization
-- **Multiple AI Models**: Support for Anthropic Claude and OpenAI GPT-4
+- **Multiple AI Models**: Support for Anthropic Claude, OpenAI GPT-4, and Portkey
 - **Language Support**: Generate summaries in Chinese (中文) or English
 - **Smart Caching**: Automatic caching of summaries by URL to avoid redundant API calls
-- **API Flexibility**: Use direct Anthropic API or OpenRouter for model access
+- **API Flexibility**: Use direct Anthropic API, OpenRouter, or Portkey for model access
 
 ### 📄 Content Extraction
 - **Intelligent Text Extraction**: Extracts clean text content from web pages
@@ -109,13 +109,15 @@ npm run clean
 
 ### Configuration
 1. Go to the **Settings** tab in the popup
-2. Choose your AI model (Claude or OpenAI)
+2. Choose your AI model (Claude, OpenAI, or Portkey)
 3. Enter your API key:
    - **Claude**: Get from [Anthropic Console](https://console.anthropic.com/)
    - **OpenAI**: Get from [OpenRouter](https://openrouter.ai/) (recommended)
-4. Optionally set a custom API URL
-5. Click **Test API** to verify connectivity
-6. Click **Save Settings** to persist configuration
+   - **Portkey**: Get from [Portkey App](https://app.portkey.ai/)
+4. For Portkey, optionally enter your Virtual Key for model routing
+5. Optionally set a custom API URL
+6. Click **Test API** to verify connectivity
+7. Click **Save Settings** to persist configuration
 
 ### Advanced Features
 - **Tab Management**: Use "All Tabs" to see and switch between open tabs
@@ -128,6 +130,7 @@ npm run clean
 ### Supported Models
 - **Claude**: Direct integration with Anthropic's API
 - **OpenAI GPT-4**: Via OpenRouter or direct OpenAI API
+- **Portkey**: Hybrid integration with Portkey's unified API gateway using the official [Portkey Node.js SDK](https://portkey.ai/docs/api-reference/sdk/node) with automatic fallback to direct API calls for browser extension compatibility
 
 ### Caching Strategy
 - Summaries cached by URL for 7 days

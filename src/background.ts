@@ -1,5 +1,16 @@
 // Background service worker for managing tabs and API calls
 import { SummaryCache } from './cache';
+import Portkey from 'portkey-ai';
+
+// Custom fetch adapter for Chrome extension service worker context
+const customFetch = async (url: string, options: RequestInit): Promise<Response> => {
+  return fetch(url, {
+    ...options,
+    // Ensure we're using the global fetch properly
+    mode: 'cors',
+    credentials: 'omit'
+  });
+};
 
 // Test cache import immediately
 console.log('🧪 CACHE MODULE IMPORT TEST:', typeof SummaryCache);
@@ -15,9 +26,10 @@ interface TabInfo {
 
 interface LLMRequest {
   text: string;
-  model: 'claude' | 'openai';
+  model: 'claude' | 'openai' | 'portkey';
   apiKey: string;
   apiUrl?: string;
+  virtualKey?: string;
   language?: 'chinese' | 'english';
 }
 
@@ -221,6 +233,9 @@ class BackgroundService {
       if (model === 'claude') {
         console.log('Using Anthropic Claude API');
         apiResponse = await this.callClaudeAPI(text, apiKey, language);
+      } else if (model === 'portkey') {
+        console.log('Using Portkey API');
+        apiResponse = await this.callPortkeyAPI(text, apiKey, apiUrl, request.virtualKey, language);
       } else {
         console.log('Using OpenRouter API');
         apiResponse = await this.callOpenRouterAPI(text, model, apiKey, apiUrl, language);
@@ -368,6 +383,149 @@ class BackgroundService {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) {
         throw new Error(`Network error: Unable to connect to API endpoint. Check your internet connection and URL: ${endpoint}`);
+      }
+      throw error;
+    }
+  }
+
+  private async callPortkeyAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese'): Promise<LLMResponse> {
+    try {
+      // Try SDK approach first
+      try {
+        const portkeyConfig: any = {
+          apiKey: apiKey
+        };
+
+        // Add virtual key if provided
+        if (virtualKey) {
+          portkeyConfig.virtualKey = virtualKey;
+        }
+
+        // Add custom base URL if provided
+        if (apiUrl) {
+          portkeyConfig.baseURL = apiUrl;
+        }
+
+        const portkey = new Portkey(portkeyConfig);
+
+        // Create chat completion using SDK
+        const response = await portkey.chat.completions.create({
+          messages: [
+            {
+              role: 'system',
+              content: language === 'chinese'
+                ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
+                : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'
+            },
+            {
+              role: 'user',
+              content: this.createPrompt(text, language)
+            }
+          ],
+          model: 'gpt-4', // Default model, can be overridden by virtual key
+          max_tokens: 1000,
+          temperature: 0.5
+        });
+
+        const summary = response.choices?.[0]?.message?.content?.toString() || 'No summary generated';
+        return { summary };
+      } catch (sdkError: any) {
+        // If SDK fails, fall back to direct API call
+        console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
+        return await this.callPortkeyDirectAPI(text, apiKey, apiUrl, virtualKey, language);
+      }
+    } catch (error: any) {
+      // Handle SDK-specific errors
+      let errorMessage = 'Portkey API request failed';
+      
+      if (error?.status) {
+        const statusCode = error.status;
+        const errorDetails = error.message || error.error?.message || 'Unknown error';
+        
+        errorMessage = `Portkey API request failed (${statusCode}): ${errorDetails}`;
+
+        if (statusCode === 401) {
+          errorMessage += '\n\nTip: Check if your Portkey API key is valid and active.';
+        } else if (statusCode === 403) {
+          errorMessage += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
+        } else if (statusCode === 429) {
+          errorMessage += '\n\nTip: You have hit rate limits. Please wait before trying again.';
+        } else if (statusCode >= 500) {
+          errorMessage += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
+        }
+      } else if (error?.message) {
+        errorMessage += `: ${error.message}`;
+      }
+
+      throw new Error(errorMessage);
+    }
+  }
+
+  private async callPortkeyDirectAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese'): Promise<LLMResponse> {
+    const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Title': 'AI Page Summarizer'
+      };
+
+      // Add virtual key if provided
+      if (virtualKey) {
+        headers['x-portkey-virtual-key'] = virtualKey;
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'gpt-4', // Default model, can be overridden by virtual key
+          messages: [
+            {
+              role: 'system',
+              content: language === 'chinese'
+                ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
+                : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'
+            },
+            {
+              role: 'user',
+              content: this.createPrompt(text, language)
+            }
+          ],
+          max_tokens: 1000,
+          temperature: 0.5
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
+        const statusCode = response.status;
+        const statusText = response.statusText;
+
+        // Provide more specific error messages
+        let enhancedError = `Portkey API request failed (${statusCode} ${statusText}): ${errorDetails}`;
+
+        if (statusCode === 401) {
+          enhancedError += '\n\nTip: Check if your Portkey API key is valid and active.';
+        } else if (statusCode === 403) {
+          enhancedError += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
+        } else if (statusCode === 429) {
+          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
+        } else if (statusCode >= 500) {
+          enhancedError += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
+        }
+
+        throw new Error(enhancedError);
+      }
+
+      const data = await response.json();
+      const summary = data.choices?.[0]?.message?.content || 'No summary generated';
+      return { summary };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(`Network error: Unable to connect to Portkey API endpoint. Check your internet connection and URL: ${endpoint}`);
       }
       throw error;
     }

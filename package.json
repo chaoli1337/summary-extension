@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "marked": "^16.1.2",
+    "portkey-ai": "^1.10.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   }

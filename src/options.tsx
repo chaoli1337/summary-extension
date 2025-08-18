@@ -3,9 +3,10 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 
 interface Settings {
-  model: 'claude' | 'openai';
+  model: 'claude' | 'openai' | 'portkey';
   apiKey: string;
   apiUrl?: string;
+  virtualKey?: string;
   language: 'chinese' | 'english';
   autoSummarize?: boolean;
   cacheMaxSize?: number;
@@ -25,6 +26,7 @@ const Options: React.FC = () => {
   const [settings, setSettings] = useState<Settings>({
     model: 'claude',
     apiKey: '',
+    virtualKey: '',
     language: 'chinese',
     autoSummarize: true,
     cacheMaxSize: 100,
@@ -77,6 +79,7 @@ const Options: React.FC = () => {
           model: settings.model,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
+          virtualKey: settings.virtualKey,
           language: settings.language
         }
       });
@@ -181,14 +184,15 @@ const Options: React.FC = () => {
               </label>
               <select
                 value={settings.model}
-                onChange={(e) => setSettings(prev => ({ ...prev, model: e.target.value as 'claude' | 'openai' }))}
+                onChange={(e) => setSettings(prev => ({ ...prev, model: e.target.value as 'claude' | 'openai' | 'portkey' }))}
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               >
                 <option value="claude">Claude (Anthropic)</option>
                 <option value="openai">GPT-4 (OpenAI)</option>
+                <option value="portkey">Portkey</option>
               </select>
               <p className="mt-2 text-sm text-gray-500">
-                Choose between Claude (Anthropic) or GPT-4 (OpenAI) for text summarization
+                Choose between Claude (Anthropic), GPT-4 (OpenAI), or Portkey for text summarization
               </p>
             </div>
 
@@ -204,8 +208,15 @@ const Options: React.FC = () => {
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               />
               <p className="mt-2 text-sm text-gray-500">
-                Get your API key from <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">openrouter.ai</a> or 
-                <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">console.anthropic.com</a>
+                Get your API key from{' '}
+                {settings.model === 'portkey' ? (
+                  <a href="https://app.portkey.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">app.portkey.ai</a>
+                ) : (
+                  <>
+                    <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">openrouter.ai</a> or 
+                    <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">console.anthropic.com</a>
+                  </>
+                )}
               </p>
             </div>
 
@@ -217,13 +228,31 @@ const Options: React.FC = () => {
                 type="text"
                 value={settings.apiUrl || ''}
                 onChange={(e) => setSettings(prev => ({ ...prev, apiUrl: e.target.value }))}
-                placeholder="https://openrouter.ai/api/v1/chat/completions"
+                placeholder={settings.model === 'portkey' ? 'https://api.portkey.ai/v1/chat/completions' : 'https://openrouter.ai/api/v1/chat/completions'}
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               />
               <p className="mt-2 text-sm text-gray-500">
                 Custom API endpoint URL. Leave empty to use default endpoints.
               </p>
             </div>
+
+            {settings.model === 'portkey' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Virtual Key (optional)
+                </label>
+                <input
+                  type="text"
+                  value={settings.virtualKey || ''}
+                  onChange={(e) => setSettings(prev => ({ ...prev, virtualKey: e.target.value }))}
+                  placeholder="Enter your Portkey virtual key"
+                  className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
+                />
+                <p className="mt-2 text-sm text-gray-500">
+                  Virtual key for model routing and configuration. Get from <a href="https://app.portkey.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">app.portkey.ai</a>
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -421,8 +450,23 @@ const Options: React.FC = () => {
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Recent Updates</h2>
         
         <div className="space-y-6">
-          {/* August 17, 2025 */}
+          {/* August 18, 2025 */}
           <div className="border-l-4 border-blue-500 pl-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">August 18, 2025</h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-indigo-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Portkey Integration:</strong> Added support for Portkey AI gateway with virtual key configuration</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Enhanced Model Support:</strong> Now supports Claude, OpenAI, and Portkey with unified configuration interface</span>
+              </div>
+            </div>
+          </div>
+
+          {/* August 17, 2025 */}
+          <div className="border-l-4 border-gray-400 pl-4">
             <h3 className="text-lg font-medium text-gray-900 mb-2">August 17, 2025</h3>
             <div className="space-y-2 text-sm text-gray-700">
               <div className="flex items-start gap-2">
