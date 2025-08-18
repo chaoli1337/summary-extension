@@ -11,6 +11,21 @@ interface Settings {
   autoSummarize?: boolean;
   cacheMaxSize?: number;
   cacheExpiryDays?: number;
+  // New prompt configuration
+  customPrompts?: {
+    chinese: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+    english: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+  };
 }
 
 interface CacheStats {
@@ -30,7 +45,21 @@ const Options: React.FC = () => {
     language: 'chinese',
     autoSummarize: true,
     cacheMaxSize: 100,
-    cacheExpiryDays: 1
+    cacheExpiryDays: 1,
+    customPrompts: {
+      chinese: {
+        systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+        userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+        temperature: 0.5,
+        maxTokens: 1000
+      },
+      english: {
+        systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+        userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+        temperature: 0.5,
+        maxTokens: 1000
+      }
+    }
   });
   const [status, setStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isTestingApi, setIsTestingApi] = useState(false);
@@ -80,7 +109,8 @@ const Options: React.FC = () => {
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
           virtualKey: settings.virtualKey,
-          language: settings.language
+          language: settings.language,
+          customPrompts: settings.customPrompts
         }
       });
 
@@ -145,9 +175,32 @@ const Options: React.FC = () => {
       showStatus('Cache cleared successfully!', 'success');
       await loadCacheStats(); // Refresh stats
     } catch (error) {
-      console.error('Error clearing cache:', error);
+      console.error('Error clearing cache', error);
       showStatus('Error clearing cache', 'error');
     }
+  };
+
+  const resetPromptsToDefault = () => {
+    const defaultPrompts = {
+      chinese: {
+        systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+        userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+        temperature: 0.5,
+        maxTokens: 1000
+      },
+      english: {
+        systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+        userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+        temperature: 0.5,
+        maxTokens: 1000
+      }
+    };
+    
+    setSettings(prev => ({
+      ...prev,
+      customPrompts: defaultPrompts
+    }));
+    showStatus('Prompts reset to default values!', 'success');
   };
 
   const showStatus = (message: string, type: 'success' | 'error') => {
@@ -275,6 +328,220 @@ const Options: React.FC = () => {
             <p className="mt-2 text-sm text-gray-500">
               Choose the default language for AI-generated summaries
             </p>
+          </div>
+        </div>
+
+        {/* Prompt Configuration Section */}
+        <div className="bg-gray-50 p-6 rounded-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">Prompt Configuration</h2>
+            <button
+              onClick={resetPromptsToDefault}
+              className="px-3 py-1.5 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md transition-colors"
+            >
+              Reset to Default
+            </button>
+          </div>
+          
+          <div className="space-y-4">
+            {/* Language Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Configure Prompts for Language
+              </label>
+              <select
+                value={settings.language}
+                onChange={(e) => setSettings(prev => ({ ...prev, language: e.target.value as 'chinese' | 'english' }))}
+                className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+              >
+                <option value="chinese">中文 (Chinese)</option>
+                <option value="english">English</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Select the language to configure prompts for
+              </p>
+            </div>
+
+            {/* Dynamic Prompt Configuration */}
+            <div className="border border-gray-200 rounded-lg p-4 bg-white">
+              <h3 className="text-lg font-medium text-gray-900 mb-3">
+                {settings.language === 'chinese' ? '中文 (Chinese)' : 'English'} Prompt Configuration
+              </h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    System Prompt
+                  </label>
+                  <textarea
+                    value={settings.customPrompts?.[settings.language]?.systemPrompt || ''}
+                    onChange={(e) => setSettings(prev => ({
+                      ...prev,
+                      customPrompts: {
+                        chinese: prev.customPrompts?.chinese || {
+                          systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+                          userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+                          temperature: 0.5,
+                          maxTokens: 1000
+                        },
+                        english: prev.customPrompts?.english || {
+                          systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+                          userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+                          temperature: 0.5,
+                          maxTokens: 1000
+                        },
+                        [settings.language]: {
+                          systemPrompt: e.target.value,
+                          userPrompt: prev.customPrompts?.[settings.language]?.userPrompt || (settings.language === 'chinese' 
+                            ? '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}'
+                            : 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}'),
+                          temperature: prev.customPrompts?.[settings.language]?.temperature || 0.5,
+                          maxTokens: prev.customPrompts?.[settings.language]?.maxTokens || 1000
+                        }
+                      }
+                    }))}
+                    rows={3}
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    placeholder={`Enter the system prompt for ${settings.language === 'chinese' ? 'Chinese' : 'English'} summaries...`}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    This defines the AI assistant's role and behavior for {settings.language === 'chinese' ? 'Chinese' : 'English'} summaries
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    User Prompt Template
+                  </label>
+                  <textarea
+                    value={settings.customPrompts?.[settings.language]?.userPrompt || ''}
+                    onChange={(e) => setSettings(prev => ({
+                      ...prev,
+                      customPrompts: {
+                        chinese: prev.customPrompts?.chinese || {
+                          systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+                          userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+                          temperature: 0.5,
+                          maxTokens: 1000
+                        },
+                        english: prev.customPrompts?.english || {
+                          systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+                          userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+                          temperature: 0.5,
+                          maxTokens: 1000
+                        },
+                        [settings.language]: {
+                          systemPrompt: prev.customPrompts?.[settings.language]?.systemPrompt || (settings.language === 'chinese'
+                            ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
+                            : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'),
+                          userPrompt: e.target.value,
+                          temperature: prev.customPrompts?.[settings.language]?.temperature || 0.5,
+                          maxTokens: prev.customPrompts?.[settings.language]?.maxTokens || 1000
+                        }
+                      }
+                    }))}
+                    rows={3}
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    placeholder={`Enter the user prompt template for ${settings.language === 'chinese' ? 'Chinese' : 'English'} summaries...`}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Use {'{text}'} as a placeholder for the webpage content
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Temperature
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={settings.customPrompts?.[settings.language]?.temperature || 0.5}
+                      onChange={(e) => setSettings(prev => ({
+                        ...prev,
+                        customPrompts: {
+                          chinese: prev.customPrompts?.chinese || {
+                            systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+                            userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+                            temperature: 0.5,
+                            maxTokens: 1000
+                          },
+                          english: prev.customPrompts?.english || {
+                            systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+                            userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+                            temperature: 0.5,
+                            maxTokens: 1000
+                          },
+                          [settings.language]: {
+                            systemPrompt: prev.customPrompts?.[settings.language]?.systemPrompt || (settings.language === 'chinese'
+                              ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
+                              : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'),
+                            userPrompt: prev.customPrompts?.[settings.language]?.userPrompt || (settings.language === 'chinese'
+                              ? '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}'
+                              : 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}'),
+                            temperature: parseFloat(e.target.value) || 0.5,
+                            maxTokens: prev.customPrompts?.[settings.language]?.maxTokens || 1000
+                          }
+                        }
+                      }))}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Controls randomness (0 = deterministic, 2 = very random)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Max Tokens
+                    </label>
+                    <input
+                      type="number"
+                      min="100"
+                      max="4000"
+                      step="100"
+                      value={settings.customPrompts?.[settings.language]?.maxTokens || 1000}
+                      onChange={(e) => setSettings(prev => ({
+                        ...prev,
+                        customPrompts: {
+                          chinese: prev.customPrompts?.chinese || {
+                            systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+                            userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+                            temperature: 0.5,
+                            maxTokens: 1000
+                          },
+                          english: prev.customPrompts?.english || {
+                            systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+                            userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+                            temperature: 0.5,
+                            maxTokens: 1000
+                          },
+                          [settings.language]: {
+                            systemPrompt: prev.customPrompts?.[settings.language]?.systemPrompt || (settings.language === 'chinese'
+                              ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
+                              : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'),
+                            userPrompt: prev.customPrompts?.[settings.language]?.userPrompt || (settings.language === 'chinese'
+                              ? '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}'
+                              : 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}'),
+                            temperature: prev.customPrompts?.[settings.language]?.temperature || 0.5,
+                            maxTokens: parseInt(e.target.value) || 1000
+                          }
+                        }
+                      }))}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Maximum length of the generated summary
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+
           </div>
         </div>
 
@@ -450,6 +717,25 @@ const Options: React.FC = () => {
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Recent Updates</h2>
         
         <div className="space-y-6">
+          {/* August 19, 2025 */}
+          <div className="border-l-4 border-purple-500 pl-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">August 19, 2025</h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-purple-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Custom Prompt Configuration:</strong> Added ability to edit default prompts for both Chinese and English summaries</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Prompt Parameters:</strong> Customizable temperature and max tokens for fine-tuning AI responses</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Prompt Preview:</strong> Live preview of how custom prompts will be used with sample text</span>
+              </div>
+            </div>
+          </div>
+
           {/* August 18, 2025 */}
           <div className="border-l-4 border-blue-500 pl-4">
             <h3 className="text-lg font-medium text-gray-900 mb-2">August 18, 2025</h3>

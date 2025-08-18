@@ -27,6 +27,8 @@ A Chrome extension that extracts text from web pages and generates AI-powered su
 - **Settings Persistence**: Saves API keys and preferences securely
 - **API Testing**: Built-in connection testing for troubleshooting
 - **Multiple Endpoints**: Support for custom API URLs
+- **Custom Prompts**: Edit default prompts for both Chinese and English summaries
+- **Prompt Parameters**: Customize temperature and max tokens for fine-tuning AI responses
 - **Detached Window**: Open popup in a separate window for better workflow
 
 ## Screenshots
@@ -118,6 +120,16 @@ npm run clean
 5. Optionally set a custom API URL
 6. Click **Test API** to verify connectivity
 7. Click **Save Settings** to persist configuration
+
+### Custom Prompt Configuration
+1. In the **Prompt Configuration** section, you can customize:
+   - **System Prompts**: Define the AI assistant's role and behavior
+   - **User Prompt Templates**: Customize how the webpage content is presented to the AI
+   - **Temperature**: Control randomness (0 = deterministic, 2 = very random)
+   - **Max Tokens**: Set maximum length of generated summaries
+2. Use `{text}` as a placeholder for webpage content in user prompts
+3. Preview your prompts with sample text to see how they'll be used
+4. Click **Reset to Default** to restore original prompts
 
 ### Advanced Features
 - **Tab Management**: Use "All Tabs" to see and switch between open tabs

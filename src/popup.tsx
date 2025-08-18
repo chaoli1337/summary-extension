@@ -11,6 +11,20 @@ interface Settings {
   language: 'chinese' | 'english';
   cacheMaxSize?: number;
   cacheExpiryDays?: number;
+  customPrompts?: {
+    chinese: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+    english: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+  };
 }
 
 interface TabInfo {
@@ -304,7 +318,8 @@ const Popup: React.FC = () => {
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
           virtualKey: settings.virtualKey,
-          language: settings.language
+          language: settings.language,
+          customPrompts: settings.customPrompts
         }
       });
 

@@ -31,6 +31,20 @@ interface LLMRequest {
   apiUrl?: string;
   virtualKey?: string;
   language?: 'chinese' | 'english';
+  customPrompts?: {
+    chinese: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+    english: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+  };
 }
 
 interface LLMResponse {
@@ -232,13 +246,13 @@ class BackgroundService {
 
       if (model === 'claude') {
         console.log('Using Anthropic Claude API');
-        apiResponse = await this.callClaudeAPI(text, apiKey, language);
+        apiResponse = await this.callClaudeAPI(text, apiKey, language, request.customPrompts);
       } else if (model === 'portkey') {
         console.log('Using Portkey API');
-        apiResponse = await this.callPortkeyAPI(text, apiKey, apiUrl, request.virtualKey, language);
+        apiResponse = await this.callPortkeyAPI(text, apiKey, apiUrl, request.virtualKey, language, request.customPrompts);
       } else {
         console.log('Using OpenRouter API');
-        apiResponse = await this.callOpenRouterAPI(text, model, apiKey, apiUrl, language);
+        apiResponse = await this.callOpenRouterAPI(text, model, apiKey, apiUrl, language, request.customPrompts);
       }
 
       // Cache the response if successful and URL is provided
@@ -277,8 +291,11 @@ class BackgroundService {
     }
   }
 
-  private async callClaudeAPI(text: string, apiKey: string, language: 'chinese' | 'english' = 'chinese'): Promise<LLMResponse> {
+  private async callClaudeAPI(text: string, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
     const endpoint = 'https://api.anthropic.com/v1/messages';
+
+    // Get prompt configuration
+    const promptConfig = this.getPromptConfig(language, customPrompts);
 
     try {
       const response = await fetch(endpoint, {
@@ -291,11 +308,11 @@ class BackgroundService {
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
+          max_tokens: promptConfig.maxTokens,
           messages: [
             {
               role: 'user',
-              content: this.createPrompt(text, language)
+              content: this.createPrompt(text, language, customPrompts)
             }
           ]
         })
@@ -321,13 +338,16 @@ class BackgroundService {
     }
   }
 
-  private async callOpenRouterAPI(text: string, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese'): Promise<LLMResponse> {
+  private async callOpenRouterAPI(text: string, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
     const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
 
     const modelMap = {
       'claude': 'anthropic/claude-sonnet-4-20250514',
       'openai': 'openai/gpt-4'
     };
+
+    // Get prompt configuration
+    const promptConfig = this.getPromptConfig(language, customPrompts);
 
     try {
       const response = await fetch(endpoint, {
@@ -343,17 +363,15 @@ class BackgroundService {
           messages: [
             {
               role: 'system',
-              content: language === 'chinese'
-                ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
-                : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'
+              content: promptConfig.systemPrompt
             },
             {
               role: 'user',
-              content: this.createPrompt(text, language)
+              content: this.createPrompt(text, language, customPrompts)
             }
           ],
-          max_tokens: 1000,
-          temperature: 0.5
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
         })
       });
 
@@ -388,7 +406,7 @@ class BackgroundService {
     }
   }
 
-  private async callPortkeyAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese'): Promise<LLMResponse> {
+  private async callPortkeyAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
     try {
       // Try SDK approach first
       try {
@@ -408,23 +426,24 @@ class BackgroundService {
 
         const portkey = new Portkey(portkeyConfig);
 
+        // Get prompt configuration
+        const promptConfig = this.getPromptConfig(language, customPrompts);
+
         // Create chat completion using SDK
         const response = await portkey.chat.completions.create({
           messages: [
             {
               role: 'system',
-              content: language === 'chinese'
-                ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
-                : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'
+              content: promptConfig.systemPrompt
             },
             {
               role: 'user',
-              content: this.createPrompt(text, language)
+              content: this.createPrompt(text, language, customPrompts)
             }
           ],
           model: 'gpt-4', // Default model, can be overridden by virtual key
-          max_tokens: 1000,
-          temperature: 0.5
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
         });
 
         const summary = response.choices?.[0]?.message?.content?.toString() || 'No summary generated';
@@ -432,7 +451,7 @@ class BackgroundService {
       } catch (sdkError: any) {
         // If SDK fails, fall back to direct API call
         console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
-        return await this.callPortkeyDirectAPI(text, apiKey, apiUrl, virtualKey, language);
+        return await this.callPortkeyDirectAPI(text, apiKey, apiUrl, virtualKey, language, customPrompts);
       }
     } catch (error: any) {
       // Handle SDK-specific errors
@@ -461,7 +480,7 @@ class BackgroundService {
     }
   }
 
-  private async callPortkeyDirectAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese'): Promise<LLMResponse> {
+  private async callPortkeyDirectAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
     const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
 
     try {
@@ -476,6 +495,9 @@ class BackgroundService {
         headers['x-portkey-virtual-key'] = virtualKey;
       }
 
+      // Get prompt configuration
+      const promptConfig = this.getPromptConfig(language, customPrompts);
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers,
@@ -484,17 +506,15 @@ class BackgroundService {
           messages: [
             {
               role: 'system',
-              content: language === 'chinese'
-                ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
-                : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'
+              content: promptConfig.systemPrompt
             },
             {
               role: 'user',
-              content: this.createPrompt(text, language)
+              content: this.createPrompt(text, language, customPrompts)
             }
           ],
-          max_tokens: 1000,
-          temperature: 0.5
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
         })
       });
 
@@ -559,13 +579,32 @@ class BackgroundService {
     }
   }
 
-  private createPrompt(text: string, language: 'chinese' | 'english'): string {
-    const prompts = {
-      chinese: `请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n${text}`,
-      english: `Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n${text}`
+  private getPromptConfig(language: 'chinese' | 'english', customPrompts?: any) {
+    const defaultConfig = {
+      chinese: {
+        systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+        userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+        temperature: 0.5,
+        maxTokens: 1000
+      },
+      english: {
+        systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+        userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+        temperature: 0.5,
+        maxTokens: 1000
+      }
     };
 
-    return prompts[language];
+    if (customPrompts && customPrompts[language]) {
+      return customPrompts[language];
+    }
+
+    return defaultConfig[language];
+  }
+
+  private createPrompt(text: string, language: 'chinese' | 'english', customPrompts?: any): string {
+    const promptConfig = this.getPromptConfig(language, customPrompts);
+    return promptConfig.userPrompt.replace('{text}', text);
   }
 
   async getCacheStats() {
