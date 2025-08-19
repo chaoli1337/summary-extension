@@ -310,6 +310,16 @@ const Popup: React.FC = () => {
     setExtractedText(''); // Clear extracted text when starting new summary
     setCacheInfo(null);
     setChatMessages([]); // Clear chat messages when starting new summary
+    
+    // Clear conversation context in background
+    if (currentTab?.id) {
+      chrome.runtime.sendMessage({
+        action: 'clearConversationContext',
+        tabId: currentTab.id
+      }).catch(error => {
+        console.error('Failed to clear conversation context:', error);
+      });
+    }
 
     try {
       const response = await chrome.runtime.sendMessage({
@@ -422,7 +432,7 @@ const Popup: React.FC = () => {
 
   // Chat functions
   const sendChatMessage = async (message: string) => {
-    if (!message.trim()) return;
+    if (!message.trim() || !settings.apiKey) return;
 
     const userMessage: ChatMessage = {
       id: `user_${Date.now()}`,
@@ -436,53 +446,71 @@ const Popup: React.FC = () => {
     setIsChatLoading(true);
 
     try {
-      // Prepare conversation history for context
-      const conversationHistory = [
-        {
-          role: 'system' as const,
-          content: settings.language === 'chinese' 
-            ? '你是一个有用的助手，可以回答各种问题。如果用户提供了网页内容，请基于网页内容回答问题。如果用户提供了网页摘要，请基于摘要回答问题。如果没有提供任何内容，请直接回答用户的问题。'
-            : 'You are a helpful assistant that can answer various questions. If the user provides webpage content, answer questions based on that content. If the user provides a webpage summary, answer questions based on that summary. If no content is provided, answer the user\'s question directly.'
-        },
-        ...(extractedText ? [
-          {
-            role: 'user' as const,
-            content: settings.language === 'chinese'
-              ? `以下是当前网页的完整内容：\n\n${extractedText}\n\n请基于这个网页内容回答我的问题。`
-              : `Here is the complete content of the current webpage:\n\n${extractedText}\n\nPlease answer my question based on this webpage content.`
-          },
-          {
+      // Build conversation history including the initial webpage context
+      const conversationHistory = [];
+      
+      // Always include a system message
+      conversationHistory.push({
+        role: 'system' as const,
+        content: settings.language === 'chinese' 
+          ? '你是一个有用的助手，可以回答各种问题。如果用户提供了网页内容，请基于网页内容回答问题。'
+          : 'You are a helpful assistant that can answer various questions. If the user provides webpage content, answer questions based on that content.'
+      });
+      
+      // Always include the webpage context if available
+      if (extractedText) {
+        conversationHistory.push({
+          role: 'user' as const,
+          content: settings.language === 'chinese'
+            ? `以下是当前网页的完整内容：\n\n${extractedText}\n\n请基于这个网页内容回答我的问题。`
+            : `Here is the complete content of the current webpage:\n\n${extractedText}\n\nPlease answer my questions based on this webpage content.`
+        });
+        
+        // Only add the "I have read" message for the first interaction
+        if (chatMessages.length === 0) {
+          conversationHistory.push({
             role: 'assistant' as const,
             content: settings.language === 'chinese'
-              ? '我已经阅读了网页内容，请告诉我您想了解什么？'
+              ? '我已经阅读了网页内容。请问您想了解什么？'
               : 'I have read the webpage content. What would you like to know?'
-          }
-        ] : summary ? [
-          {
-            role: 'user' as const,
-            content: settings.language === 'chinese'
-              ? `以下是网页的摘要：\n\n${summary}\n\n请基于这个摘要回答我的问题。`
-              : `Here is the summary of the webpage:\n\n${summary}\n\nPlease answer my question based on this summary.`
-          },
-          {
+          });
+        }
+      } else if (summary) {
+        conversationHistory.push({
+          role: 'user' as const,
+          content: settings.language === 'chinese'
+            ? `以下是网页的摘要：\n\n${summary}\n\n请基于这个摘要回答我的问题。`
+            : `Here is the summary of the webpage:\n\n${summary}\n\nPlease answer my questions based on this summary.`
+        });
+        
+        // Only add the "I have read" message for the first interaction
+        if (chatMessages.length === 0) {
+          conversationHistory.push({
             role: 'assistant' as const,
             content: settings.language === 'chinese'
-              ? '我已经阅读了网页摘要，请告诉我您想了解什么？'
+              ? '我已经阅读了网页摘要。请问您想了解什么？'
               : 'I have read the webpage summary. What would you like to know?'
-          }
-        ] : []),
-        ...chatMessages.map(msg => ({
+          });
+        }
+      }
+      
+      // Add all previous chat messages
+      chatMessages.forEach(msg => {
+        conversationHistory.push({
           role: msg.role as 'user' | 'assistant',
           content: msg.content
-        })),
-        {
-          role: 'user' as const,
-          content: message
-        }
-      ];
+        });
+      });
+      
+      // Add the current user message
+      conversationHistory.push({
+        role: 'user' as const,
+        content: message
+      });
 
       const response = await chrome.runtime.sendMessage({
         action: 'chatMessage',
+        tabId: currentTab?.id,
         data: {
           messages: conversationHistory,
           model: settings.model,
@@ -523,6 +551,24 @@ const Popup: React.FC = () => {
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendChatMessage(chatInput);
+  };
+
+  const clearChat = async () => {
+    setChatMessages([]);
+    setChatInput('');
+    
+    // Clear conversation context in background
+    if (currentTab?.id) {
+      try {
+        await chrome.runtime.sendMessage({
+          action: 'clearConversationContext',
+          tabId: currentTab.id
+        });
+        console.log('Cleared conversation context for tab', currentTab.id);
+      } catch (error) {
+        console.error('Failed to clear conversation context:', error);
+      }
+    }
   };
 
   // Auto-scroll chat to bottom when new messages arrive
@@ -770,8 +816,17 @@ const Popup: React.FC = () => {
 
             {/* Chat Interface */}
             <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-0">
-              <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 rounded-t-lg">
+              <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 rounded-t-lg flex justify-between items-center">
                 <h3 className="text-sm font-medium text-gray-900 m-0">Chat about this page</h3>
+                {chatMessages.length > 0 && (
+                  <button
+                    onClick={clearChat}
+                    className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                    title={settings.language === 'chinese' ? '清除聊天记录' : 'Clear chat history'}
+                  >
+                    {settings.language === 'chinese' ? '清除' : 'Clear'}
+                  </button>
+                )}
               </div>
               
               {/* Chat Messages */}

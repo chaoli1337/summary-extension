@@ -93,6 +93,7 @@ class BackgroundService {
   private static instance: BackgroundService;
   private pendingRequests = new Map<string, PendingRequest>();
   private cleanupInterval: any = null;
+  private conversationContexts = new Map<string, Array<{role: 'system' | 'user' | 'assistant'; content: string}>>();
 
   static getInstance(): BackgroundService {
     if (!this.instance) {
@@ -641,11 +642,17 @@ class BackgroundService {
     return await SummaryCache.clear();
   }
 
-  async callChatAPI(request: ChatRequest): Promise<LLMResponse> {
+  async callChatAPI(request: ChatRequest & { tabId?: number }): Promise<LLMResponse> {
     try {
-      const { messages, model, apiKey, apiUrl, virtualKey, language = 'chinese', customPrompts } = request;
+      const { messages, model, apiKey, apiUrl, virtualKey, language = 'chinese', customPrompts, tabId } = request;
 
-      console.log('Chat API called with:', { model, language, messageCount: messages.length });
+      console.log('Chat API called with:', { model, language, messageCount: messages.length, tabId });
+
+      // Store conversation context for this tab if provided
+      if (tabId !== undefined) {
+        this.conversationContexts.set(`tab_${tabId}`, messages);
+        console.log(`Stored conversation context for tab ${tabId}, total messages: ${messages.length}`);
+      }
 
       let apiResponse: LLMResponse;
 
@@ -1207,6 +1214,22 @@ class BackgroundService {
     
     return [summaryMessage, ...chunk];
   }
+
+  getConversationContext(tabId: number): Array<{role: 'system' | 'user' | 'assistant'; content: string}> | null {
+    const key = `tab_${tabId}`;
+    return this.conversationContexts.get(key) || null;
+  }
+
+  clearConversationContext(tabId: number): void {
+    const key = `tab_${tabId}`;
+    this.conversationContexts.delete(key);
+    console.log(`Cleared conversation context for tab ${tabId}`);
+  }
+
+  clearAllConversationContexts(): void {
+    this.conversationContexts.clear();
+    console.log('Cleared all conversation contexts');
+  }
 }
 
 // Message handling
@@ -1259,7 +1282,21 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       return true;
 
     case 'chatMessage':
-      service.callChatAPI(request.data).then(sendResponse);
+      // Include tab ID for context tracking
+      const chatRequest = { ...request.data, tabId: request.tabId };
+      service.callChatAPI(chatRequest).then(sendResponse);
+      return true;
+
+    case 'getConversationContext':
+      // Get stored conversation context for a tab
+      const context = service.getConversationContext(request.tabId);
+      sendResponse({ context });
+      return true;
+
+    case 'clearConversationContext':
+      // Clear conversation context for a tab
+      service.clearConversationContext(request.tabId);
+      sendResponse({ success: true });
       return true;
 
     default:
