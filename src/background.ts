@@ -653,8 +653,17 @@ class BackgroundService {
         console.log('Using Anthropic Claude API for chat');
         apiResponse = await this.callClaudeChatAPI(messages, apiKey, language, customPrompts);
       } else if (model === 'portkey') {
-        console.log('Using Portkey API for chat');
-        apiResponse = await this.callPortkeyChatAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+        console.log('Using Portkey Large Context API for chat');
+        // Check if we need extremely large context handling
+        const totalLength = messages.reduce((sum, msg) => sum + msg.content.length, 0);
+        const estimatedTokens = Math.ceil(totalLength / 4);
+        
+        if (estimatedTokens > 100000) {
+          console.log(`Detected extremely large context (~${estimatedTokens} tokens), using chunked processing`);
+          apiResponse = await this.handleExtremelyLargeContext(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+        } else {
+          apiResponse = await this.callPortkeyLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+        }
       } else {
         console.log('Using OpenRouter API for chat');
         apiResponse = await this.callOpenRouterChatAPI(messages, model, apiKey, apiUrl, language, customPrompts);
@@ -894,6 +903,309 @@ class BackgroundService {
       }
       throw error;
     }
+  }
+
+  // Add this new method for large context conversations
+  private async callPortkeyLargeContextAPI(
+    messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, 
+    apiKey: string, 
+    apiUrl?: string, 
+    virtualKey?: string, 
+    language: 'chinese' | 'english' = 'chinese', 
+    customPrompts?: any
+  ): Promise<LLMResponse> {
+    try {
+      // Try SDK approach first
+      try {
+        const portkeyConfig: any = {
+          apiKey: apiKey
+        };
+
+        if (virtualKey) {
+          portkeyConfig.virtualKey = virtualKey;
+        }
+
+        if (apiUrl) {
+          portkeyConfig.baseURL = apiUrl;
+        }
+
+        const portkey = new Portkey(portkeyConfig);
+
+        // Get prompt configuration
+        const promptConfig = this.getPromptConfig(language, customPrompts);
+
+        // For large context, we need to manage token limits
+        // Most models have limits, so we'll implement smart truncation
+        const processedMessages = this.processLargeContext(messages, promptConfig.maxTokens);
+
+        const response = await portkey.chat.completions.create({
+          messages: processedMessages,
+          model: 'gpt-4', // or use virtual key to route to specific model
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
+        });
+
+        const summary = response.choices?.[0]?.message?.content?.toString() || 'No response generated';
+        return { summary };
+      } catch (sdkError: any) {
+        console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
+        return await this.callPortkeyDirectLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+      }
+    } catch (error: any) {
+      let errorMessage = 'Portkey large context API request failed';
+      
+      if (error.message) {
+        errorMessage += `: ${error.message}`;
+      }
+      
+      throw new Error(errorMessage);
+    }
+  }
+
+  // Process large context by implementing smart truncation
+  private processLargeContext(
+    messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, 
+    maxTokens: number
+  ): Array<{role: 'system' | 'user' | 'assistant'; content: string}> {
+    
+    // Rough token estimation (4 characters per token)
+    const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+    
+    // Calculate total tokens in current messages
+    let totalTokens = 0;
+    const processedMessages = [];
+    
+    // Always keep system message
+    if (messages.length > 0 && messages[0].role === 'system') {
+      processedMessages.push(messages[0]);
+      totalTokens += estimateTokens(messages[0].content);
+    }
+    
+    // Process remaining messages from newest to oldest (keep most recent)
+    const remainingMessages = messages.slice(1).reverse();
+    
+    for (const message of remainingMessages) {
+      const messageTokens = estimateTokens(message.content);
+      
+      // Reserve space for response (roughly 1/3 of max tokens)
+      const reservedTokens = Math.floor(maxTokens / 3);
+      const availableTokens = maxTokens - reservedTokens;
+      
+      if (totalTokens + messageTokens <= availableTokens) {
+        processedMessages.unshift(message); // Add to beginning (maintain order)
+        totalTokens += messageTokens;
+      } else {
+        // If message is too long, truncate it
+        if (messageTokens > availableTokens - totalTokens) {
+          const availableChars = (availableTokens - totalTokens) * 4;
+          const truncatedContent = message.content.substring(0, availableChars) + '...';
+          processedMessages.unshift({
+            role: message.role,
+            content: truncatedContent
+          });
+          break;
+        }
+      }
+    }
+    
+    return processedMessages;
+  }
+
+  // Direct API fallback for large context
+  private async callPortkeyDirectLargeContextAPI(
+    messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, 
+    apiKey: string, 
+    apiUrl?: string, 
+    virtualKey?: string, 
+    language: 'chinese' | 'english' = 'chinese', 
+    customPrompts?: any
+  ): Promise<LLMResponse> {
+    const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
+    
+    try {
+      const promptConfig = this.getPromptConfig(language, customPrompts);
+      const processedMessages = this.processLargeContext(messages, promptConfig.maxTokens);
+      
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      };
+
+      if (virtualKey) {
+        headers['x-portkey-virtual-key'] = virtualKey;
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: processedMessages,
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
+        throw new Error(`Portkey API request failed (${response.status}): ${errorDetails}`);
+      }
+
+      const data = await response.json();
+      const summary = data.choices?.[0]?.message?.content || 'No response generated';
+      return { summary };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(`Network error: Unable to connect to Portkey API endpoint: ${endpoint}`);
+      }
+      throw error;
+    }
+  }
+
+  // Handle extremely large contexts (1M+ tokens) with smart chunking
+  private async handleExtremelyLargeContext(
+    messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, 
+    apiKey: string, 
+    apiUrl?: string, 
+    virtualKey?: string, 
+    language: 'chinese' | 'english' = 'chinese', 
+    customPrompts?: any
+  ): Promise<LLMResponse> {
+    
+    // If context is manageable, use regular large context API
+    const totalLength = messages.reduce((sum, msg) => sum + msg.content.length, 0);
+    const estimatedTokens = Math.ceil(totalLength / 4);
+    
+    // If under 100K tokens, use regular processing
+    if (estimatedTokens < 100000) {
+      return await this.callPortkeyLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+    }
+    
+    console.log(`Processing extremely large context: ~${estimatedTokens} tokens`);
+    
+    // For extremely large contexts, implement smart chunking
+    const chunkedMessages = this.chunkLargeContext(messages);
+    
+    // Process each chunk and maintain conversation flow
+    let processedContext = '';
+    let conversationSummary = '';
+    
+    for (let i = 0; i < chunkedMessages.length; i++) {
+      const chunk = chunkedMessages[i];
+      
+      // Create a summary of previous chunks if we have them
+      if (i > 0 && processedContext.length > 0) {
+        const summaryPrompt = [
+          {
+            role: 'system' as const,
+            content: language === 'chinese' 
+              ? '请总结以下对话内容，保留关键信息和上下文，以便后续对话使用。'
+              : 'Please summarize the following conversation content, preserving key information and context for subsequent conversations.'
+          },
+          {
+            role: 'user' as const,
+            content: processedContext
+          }
+        ];
+        
+        try {
+          const summaryResponse = await this.callPortkeyDirectAPI(
+            processedContext, 
+            apiKey, 
+            apiUrl, 
+            virtualKey, 
+            language, 
+            customPrompts
+          );
+          conversationSummary = summaryResponse.summary;
+        } catch (error) {
+          console.warn('Failed to create conversation summary:', error);
+        }
+      }
+      
+      // Process current chunk
+      const chunkWithSummary = this.integrateSummaryWithChunk(chunk, conversationSummary, language);
+      
+      try {
+        const response = await this.callPortkeyLargeContextAPI(
+          chunkWithSummary, 
+          apiKey, 
+          apiUrl, 
+          virtualKey, 
+          language, 
+          customPrompts
+        );
+        
+        // Update processed context
+        processedContext += '\n\n' + chunk.map(msg => `${msg.role}: ${msg.content}`).join('\n');
+        
+        // If this is the last chunk, return the response
+        if (i === chunkedMessages.length - 1) {
+          return response;
+        }
+        
+      } catch (error) {
+        console.error(`Error processing chunk ${i}:`, error);
+        throw error;
+      }
+    }
+    
+    throw new Error('Failed to process large context');
+  }
+  
+  // Chunk large context into manageable pieces
+  private chunkLargeContext(
+    messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>
+  ): Array<Array<{role: 'system' | 'user' | 'assistant'; content: string}>> {
+    
+    const maxChunkSize = 50000; // ~50K tokens per chunk
+    const chunks: Array<Array<{role: 'system' | 'user' | 'assistant'; content: string}>> = [];
+    let currentChunk: Array<{role: 'system' | 'user' | 'assistant'; content: string}> = [];
+    let currentChunkSize = 0;
+    
+    for (const message of messages) {
+      const messageSize = message.content.length;
+      
+      // If adding this message would exceed chunk size, start a new chunk
+      if (currentChunkSize + messageSize > maxChunkSize && currentChunk.length > 0) {
+        chunks.push([...currentChunk]);
+        currentChunk = [];
+        currentChunkSize = 0;
+      }
+      
+      // Add message to current chunk
+      currentChunk.push(message);
+      currentChunkSize += messageSize;
+    }
+    
+    // Add the last chunk if it has content
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    
+    return chunks;
+  }
+  
+  // Integrate conversation summary with current chunk
+  private integrateSummaryWithChunk(
+    chunk: Array<{role: 'system' | 'user' | 'assistant'; content: string}>,
+    summary: string,
+    language: 'chinese' | 'english'
+  ): Array<{role: 'system' | 'user' | 'assistant'; content: string}> {
+    
+    if (!summary) {
+      return chunk;
+    }
+    
+    const summaryMessage = {
+      role: 'system' as const,
+      content: language === 'chinese'
+        ? `之前的对话摘要：${summary}\n\n请基于这个摘要和当前对话继续回答。`
+        : `Previous conversation summary: ${summary}\n\nPlease continue the conversation based on this summary and the current dialogue.`
+    };
+    
+    return [summaryMessage, ...chunk];
   }
 }
 
