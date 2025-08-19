@@ -4,6 +4,7 @@ import './styles.css';
 
 interface Settings {
   model: 'claude' | 'openai' | 'portkey';
+  modelIdentifier?: string; // Configurable model identifier
   apiKey: string;
   apiUrl?: string;
   virtualKey?: string;
@@ -40,6 +41,7 @@ interface CacheStats {
 const Options: React.FC = () => {
   const [settings, setSettings] = useState<Settings>({
     model: 'claude',
+    modelIdentifier: 'claude-sonnet-4-20250514', // Default model identifier
     apiKey: '',
     virtualKey: '',
     language: 'chinese',
@@ -106,6 +108,7 @@ const Options: React.FC = () => {
         data: {
           text: 'This is a test message to verify API connectivity.',
           model: settings.model,
+          modelIdentifier: settings.modelIdentifier,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
           virtualKey: settings.virtualKey,
@@ -141,6 +144,9 @@ const Options: React.FC = () => {
         
         errorMessage += `\n\nDebug Info:`;
         errorMessage += `\nModel: ${settings.model}`;
+        if (settings.modelIdentifier) {
+          errorMessage += `\nModel Identifier: ${settings.modelIdentifier}`;
+        }
         if (settings.model === 'claude') {
           errorMessage += `\nAPI: Anthropic Claude API`;
         } else {
@@ -237,7 +243,29 @@ const Options: React.FC = () => {
               </label>
               <select
                 value={settings.model}
-                onChange={(e) => setSettings(prev => ({ ...prev, model: e.target.value as 'claude' | 'openai' | 'portkey' }))}
+                onChange={(e) => {
+                  const newModel = e.target.value as 'claude' | 'openai' | 'portkey';
+                  let defaultModelIdentifier = '';
+                  
+                  // Set appropriate default model identifier based on selected model
+                  switch (newModel) {
+                    case 'claude':
+                      defaultModelIdentifier = 'claude-sonnet-4-20250514';
+                      break;
+                    case 'openai':
+                      defaultModelIdentifier = 'gpt-4';
+                      break;
+                    case 'portkey':
+                      defaultModelIdentifier = 'gpt-4'; // Use gpt-4 for Portkey by default
+                      break;
+                  }
+                  
+                  setSettings(prev => ({ 
+                    ...prev, 
+                    model: newModel,
+                    modelIdentifier: defaultModelIdentifier
+                  }));
+                }}
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               >
                 <option value="claude">Claude (Anthropic)</option>
@@ -246,6 +274,31 @@ const Options: React.FC = () => {
               </select>
               <p className="mt-2 text-sm text-gray-500">
                 Choose between Claude (Anthropic), GPT-4 (OpenAI), or Portkey for text summarization
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Model Identifier
+              </label>
+              <input
+                type="text"
+                value={settings.modelIdentifier || ''}
+                onChange={(e) => setSettings(prev => ({ ...prev, modelIdentifier: e.target.value }))}
+                placeholder={
+                  settings.model === 'claude' ? 'claude-sonnet-4-20250514' :
+                  settings.model === 'openai' ? 'gpt-4' :
+                  'gpt-4'
+                }
+                className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
+              />
+              <p className="mt-2 text-sm text-gray-500">
+                {settings.model === 'claude' ? 
+                  'Claude model identifier (e.g., claude-sonnet-4-20250514, claude-3-opus-20240229)' :
+                  settings.model === 'openai' ? 
+                  'OpenAI model identifier (e.g., gpt-4, gpt-4-turbo, gpt-3.5-turbo)' :
+                  'Model identifier for Portkey routing (e.g., gpt-4, claude-3-opus-20240229)'
+                }
               </p>
             </div>
 

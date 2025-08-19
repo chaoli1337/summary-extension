@@ -27,6 +27,7 @@ interface TabInfo {
 interface LLMRequest {
   text: string;
   model: 'claude' | 'openai' | 'portkey';
+  modelIdentifier?: string;
   apiKey: string;
   apiUrl?: string;
   virtualKey?: string;
@@ -53,6 +54,7 @@ interface ChatRequest {
     content: string;
   }>;
   model: 'claude' | 'openai' | 'portkey';
+  modelIdentifier?: string;
   apiKey: string;
   apiUrl?: string;
   virtualKey?: string;
@@ -108,6 +110,25 @@ class BackgroundService {
     this.cleanupInterval = setInterval(() => {
       this.cleanupOldRequests();
     }, 5 * 60 * 1000);
+  }
+
+  // Helper function to get the appropriate model identifier
+  private getModelIdentifier(model: 'claude' | 'openai' | 'portkey', modelIdentifier?: string): string {
+    if (modelIdentifier) {
+      return modelIdentifier;
+    }
+    
+    // Default model identifiers for each provider
+    switch (model) {
+      case 'claude':
+        return 'claude-sonnet-4-20250514';
+      case 'openai':
+        return 'gpt-4';
+      case 'portkey':
+        return 'gpt-4'; // Default for Portkey, can be overridden by virtual key
+      default:
+        return 'gpt-4';
+    }
   }
 
   private cleanupOldRequests() {
@@ -273,13 +294,13 @@ class BackgroundService {
 
       if (model === 'claude') {
         console.log('Using Anthropic Claude API');
-        apiResponse = await this.callClaudeAPI(text, apiKey, language, request.customPrompts);
+        apiResponse = await this.callClaudeAPI(text, apiKey, language, request.customPrompts, request.modelIdentifier);
       } else if (model === 'portkey') {
         console.log('Using Portkey API');
-        apiResponse = await this.callPortkeyAPI(text, apiKey, apiUrl, request.virtualKey, language, request.customPrompts);
+        apiResponse = await this.callPortkeyAPI(text, apiKey, apiUrl, request.virtualKey, language, request.customPrompts, request.modelIdentifier);
       } else {
         console.log('Using OpenRouter API');
-        apiResponse = await this.callOpenRouterAPI(text, model, apiKey, apiUrl, language, request.customPrompts);
+        apiResponse = await this.callOpenRouterAPI(text, model, apiKey, apiUrl, language, request.customPrompts, request.modelIdentifier);
       }
 
       // Cache the response if successful and URL is provided
@@ -318,11 +339,12 @@ class BackgroundService {
     }
   }
 
-  private async callClaudeAPI(text: string, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  private async callClaudeAPI(text: string, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any, modelIdentifier?: string): Promise<LLMResponse> {
     const endpoint = 'https://api.anthropic.com/v1/messages';
 
     // Get prompt configuration
     const promptConfig = this.getPromptConfig(language, customPrompts);
+    const model = this.getModelIdentifier('claude', modelIdentifier);
 
     try {
       const response = await fetch(endpoint, {
@@ -334,7 +356,7 @@ class BackgroundService {
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: model,
           max_tokens: promptConfig.maxTokens,
           messages: [
             {
@@ -365,16 +387,25 @@ class BackgroundService {
     }
   }
 
-  private async callOpenRouterAPI(text: string, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  private async callOpenRouterAPI(text: string, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any, modelIdentifier?: string): Promise<LLMResponse> {
     const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
-
-    const modelMap = {
-      'claude': 'anthropic/claude-sonnet-4-20250514',
-      'openai': 'openai/gpt-4'
-    };
 
     // Get prompt configuration
     const promptConfig = this.getPromptConfig(language, customPrompts);
+    
+    // Use provided model identifier or default mapping
+    let modelToUse: string;
+    if (modelIdentifier) {
+      // If custom model identifier is provided, use it with provider prefix
+      modelToUse = model === 'claude' ? `anthropic/${modelIdentifier}` : `openai/${modelIdentifier}`;
+    } else {
+      // Use default mapping
+      const modelMap = {
+        'claude': 'anthropic/claude-sonnet-4-20250514',
+        'openai': 'openai/gpt-4'
+      };
+      modelToUse = modelMap[model];
+    }
 
     try {
       const response = await fetch(endpoint, {
@@ -386,7 +417,7 @@ class BackgroundService {
           'X-Title': 'AI Page Summarizer'
         },
         body: JSON.stringify({
-          model: modelMap[model],
+          model: modelToUse,
           messages: [
             {
               role: 'system',
@@ -433,7 +464,7 @@ class BackgroundService {
     }
   }
 
-  private async callPortkeyAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  private async callPortkeyAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any, modelIdentifier?: string): Promise<LLMResponse> {
     try {
       // Try SDK approach first
       try {
@@ -455,6 +486,7 @@ class BackgroundService {
 
         // Get prompt configuration
         const promptConfig = this.getPromptConfig(language, customPrompts);
+        const model = this.getModelIdentifier('portkey', modelIdentifier);
 
         // Create chat completion using SDK
         const response = await portkey.chat.completions.create({
@@ -468,7 +500,7 @@ class BackgroundService {
               content: this.createPrompt(text, language, customPrompts)
             }
           ],
-          model: 'gpt-4', // Default model, can be overridden by virtual key
+          model: model, // Use configurable model identifier
           max_tokens: promptConfig.maxTokens,
           temperature: promptConfig.temperature
         });
@@ -478,7 +510,7 @@ class BackgroundService {
       } catch (sdkError: any) {
         // If SDK fails, fall back to direct API call
         console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
-        return await this.callPortkeyDirectAPI(text, apiKey, apiUrl, virtualKey, language, customPrompts);
+        return await this.callPortkeyDirectAPI(text, apiKey, apiUrl, virtualKey, language, customPrompts, modelIdentifier);
       }
     } catch (error: any) {
       // Handle SDK-specific errors
@@ -507,7 +539,7 @@ class BackgroundService {
     }
   }
 
-  private async callPortkeyDirectAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  private async callPortkeyDirectAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any, modelIdentifier?: string): Promise<LLMResponse> {
     const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
 
     try {
@@ -524,12 +556,13 @@ class BackgroundService {
 
       // Get prompt configuration
       const promptConfig = this.getPromptConfig(language, customPrompts);
+      const model = this.getModelIdentifier('portkey', modelIdentifier);
 
       const response = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: 'gpt-4', // Default model, can be overridden by virtual key
+          model: model, // Use configurable model identifier
           messages: [
             {
               role: 'system',
@@ -658,7 +691,7 @@ class BackgroundService {
 
       if (model === 'claude') {
         console.log('Using Anthropic Claude API for chat');
-        apiResponse = await this.callClaudeChatAPI(messages, apiKey, language, customPrompts);
+        apiResponse = await this.callClaudeChatAPI(messages, apiKey, language, customPrompts, request.modelIdentifier);
       } else if (model === 'portkey') {
         console.log('Using Portkey Large Context API for chat');
         // Check if we need extremely large context handling
@@ -667,13 +700,13 @@ class BackgroundService {
         
         if (estimatedTokens > 100000) {
           console.log(`Detected extremely large context (~${estimatedTokens} tokens), using chunked processing`);
-          apiResponse = await this.handleExtremelyLargeContext(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+          apiResponse = await this.handleExtremelyLargeContext(messages, apiKey, apiUrl, virtualKey, language, customPrompts, request.modelIdentifier);
         } else {
-          apiResponse = await this.callPortkeyLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+          apiResponse = await this.callPortkeyLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts, request.modelIdentifier);
         }
       } else {
         console.log('Using OpenRouter API for chat');
-        apiResponse = await this.callOpenRouterChatAPI(messages, model, apiKey, apiUrl, language, customPrompts);
+        apiResponse = await this.callOpenRouterChatAPI(messages, model, apiKey, apiUrl, language, customPrompts, request.modelIdentifier);
       }
 
       return apiResponse;
@@ -686,11 +719,12 @@ class BackgroundService {
     }
   }
 
-  private async callClaudeChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  private async callClaudeChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any, modelIdentifier?: string): Promise<LLMResponse> {
     const endpoint = 'https://api.anthropic.com/v1/messages';
 
     // Get prompt configuration for chat
     const promptConfig = this.getPromptConfig(language, customPrompts);
+    const model = this.getModelIdentifier('claude', modelIdentifier);
 
     try {
       const response = await fetch(endpoint, {
@@ -702,7 +736,7 @@ class BackgroundService {
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: model,
           max_tokens: promptConfig.maxTokens,
           messages: messages
         })
@@ -728,16 +762,25 @@ class BackgroundService {
     }
   }
 
-  private async callOpenRouterChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  private async callOpenRouterChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any, modelIdentifier?: string): Promise<LLMResponse> {
     const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
-
-    const modelMap = {
-      'claude': 'anthropic/claude-sonnet-4-20250514',
-      'openai': 'openai/gpt-4'
-    };
 
     // Get prompt configuration for chat
     const promptConfig = this.getPromptConfig(language, customPrompts);
+    
+    // Use provided model identifier or default mapping
+    let modelToUse: string;
+    if (modelIdentifier) {
+      // If custom model identifier is provided, use it with provider prefix
+      modelToUse = model === 'claude' ? `anthropic/${modelIdentifier}` : `openai/${modelIdentifier}`;
+    } else {
+      // Use default mapping
+      const modelMap = {
+        'claude': 'anthropic/claude-sonnet-4-20250514',
+        'openai': 'openai/gpt-4'
+      };
+      modelToUse = modelMap[model];
+    }
 
     try {
       const response = await fetch(endpoint, {
@@ -749,7 +792,7 @@ class BackgroundService {
           'X-Title': 'AI Page Summarizer'
         },
         body: JSON.stringify({
-          model: modelMap[model],
+          model: modelToUse,
           messages: messages,
           max_tokens: promptConfig.maxTokens,
           temperature: promptConfig.temperature
@@ -919,7 +962,8 @@ class BackgroundService {
     apiUrl?: string, 
     virtualKey?: string, 
     language: 'chinese' | 'english' = 'chinese', 
-    customPrompts?: any
+    customPrompts?: any,
+    modelIdentifier?: string
   ): Promise<LLMResponse> {
     try {
       // Try SDK approach first
@@ -1025,13 +1069,15 @@ class BackgroundService {
     apiUrl?: string, 
     virtualKey?: string, 
     language: 'chinese' | 'english' = 'chinese', 
-    customPrompts?: any
+    customPrompts?: any,
+    modelIdentifier?: string
   ): Promise<LLMResponse> {
     const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
     
     try {
       const promptConfig = this.getPromptConfig(language, customPrompts);
       const processedMessages = this.processLargeContext(messages, promptConfig.maxTokens);
+      const model = this.getModelIdentifier('portkey', modelIdentifier);
       
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${apiKey}`,
@@ -1046,7 +1092,7 @@ class BackgroundService {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: 'gpt-4',
+          model: model, // Use configurable model identifier
           messages: processedMessages,
           max_tokens: promptConfig.maxTokens,
           temperature: promptConfig.temperature
@@ -1077,7 +1123,8 @@ class BackgroundService {
     apiUrl?: string, 
     virtualKey?: string, 
     language: 'chinese' | 'english' = 'chinese', 
-    customPrompts?: any
+    customPrompts?: any,
+    modelIdentifier?: string
   ): Promise<LLMResponse> {
     
     // If context is manageable, use regular large context API
@@ -1086,7 +1133,7 @@ class BackgroundService {
     
     // If under 100K tokens, use regular processing
     if (estimatedTokens < 100000) {
-      return await this.callPortkeyLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+      return await this.callPortkeyLargeContextAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts, modelIdentifier);
     }
     
     console.log(`Processing extremely large context: ~${estimatedTokens} tokens`);
@@ -1123,7 +1170,8 @@ class BackgroundService {
             apiUrl, 
             virtualKey, 
             language, 
-            customPrompts
+            customPrompts,
+            modelIdentifier
           );
           conversationSummary = summaryResponse.summary;
         } catch (error) {
@@ -1141,7 +1189,8 @@ class BackgroundService {
           apiUrl, 
           virtualKey, 
           language, 
-          customPrompts
+          customPrompts,
+          modelIdentifier
         );
         
         // Update processed context

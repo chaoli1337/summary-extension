@@ -5,6 +5,7 @@ import './styles.css';
 
 interface Settings {
   model: 'claude' | 'openai' | 'portkey';
+  modelIdentifier?: string;
   apiKey: string;
   apiUrl?: string;
   virtualKey?: string;
@@ -346,6 +347,7 @@ const Popup: React.FC = () => {
         data: {
           text: response,
           model: settings.model,
+          modelIdentifier: settings.modelIdentifier,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
           virtualKey: settings.virtualKey,
@@ -514,6 +516,7 @@ const Popup: React.FC = () => {
         data: {
           messages: conversationHistory,
           model: settings.model,
+          modelIdentifier: settings.modelIdentifier,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
           virtualKey: settings.virtualKey,
