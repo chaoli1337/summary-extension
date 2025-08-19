@@ -33,6 +33,13 @@ interface TabInfo {
   title: string;
 }
 
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
 type TabType = 'current' | 'all-tabs';
 
 const Popup: React.FC = () => {
@@ -45,12 +52,19 @@ const Popup: React.FC = () => {
     language: 'chinese' 
   });
   const [summary, setSummary] = useState<string>('');
+  const [extractedText, setExtractedText] = useState<string>(''); // Store the extracted text
   const [error, setError] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [allTabs, setAllTabs] = useState<TabInfo[]>([]);
   const [cacheInfo, setCacheInfo] = useState<{fromCache: boolean; cachedAt?: number} | null>(null);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  
+  // Chat interface state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState<string>('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   
 
   useEffect(() => {
@@ -138,16 +152,18 @@ const Popup: React.FC = () => {
         });
 
         if (status) {
-          if (status.status === 'completed' && status.result) {
-            setIsLoading(false);
-            setSummary(status.result.summary);
-            setCacheInfo({
-              fromCache: status.result.fromCache || false,
-              cachedAt: status.result.cachedAt
-            });
-            setError('');
-            setCurrentRequestId(null);
-            clearPersistentState();
+                  if (status.status === 'completed' && status.result) {
+          setIsLoading(false);
+          console.log('Summary received:', status.result.summary.substring(0, 100) + '...');
+          console.log('Setting summary, chatMessages should be empty now');
+          setSummary(status.result.summary);
+          setCacheInfo({
+            fromCache: status.result.fromCache || false,
+            cachedAt: status.result.cachedAt
+          });
+          setError('');
+          setCurrentRequestId(null);
+          clearPersistentState();
             
             if (pollIntervalRef.current) {
               clearInterval(pollIntervalRef.current);
@@ -291,7 +307,9 @@ const Popup: React.FC = () => {
     setIsLoading(true);
     setError('');
     setSummary('');
+    setExtractedText(''); // Clear extracted text when starting new summary
     setCacheInfo(null);
+    setChatMessages([]); // Clear chat messages when starting new summary
 
     try {
       const response = await chrome.runtime.sendMessage({
@@ -306,6 +324,9 @@ const Popup: React.FC = () => {
       if (response.length < 50) {
         throw new Error('Page content is too short to summarize meaningfully.');
       }
+
+      // Store the extracted text for use in chat context
+      setExtractedText(response);
 
       // Start async summarization
       const startResponse = await chrome.runtime.sendMessage({
@@ -399,6 +420,191 @@ const Popup: React.FC = () => {
     }
   };
 
+  // Chat functions
+  const sendChatMessage = async (message: string) => {
+    if (!message.trim()) return;
+
+    const userMessage: ChatMessage = {
+      id: `user_${Date.now()}`,
+      role: 'user',
+      content: message,
+      timestamp: Date.now()
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsChatLoading(true);
+
+    try {
+      // Prepare conversation history for context
+      const conversationHistory = [
+        {
+          role: 'system' as const,
+          content: settings.language === 'chinese' 
+            ? '你是一个有用的助手，可以回答各种问题。如果用户提供了网页内容，请基于网页内容回答问题。如果用户提供了网页摘要，请基于摘要回答问题。如果没有提供任何内容，请直接回答用户的问题。'
+            : 'You are a helpful assistant that can answer various questions. If the user provides webpage content, answer questions based on that content. If the user provides a webpage summary, answer questions based on that summary. If no content is provided, answer the user\'s question directly.'
+        },
+        ...(extractedText ? [
+          {
+            role: 'user' as const,
+            content: settings.language === 'chinese'
+              ? `以下是当前网页的完整内容：\n\n${extractedText}\n\n请基于这个网页内容回答我的问题。`
+              : `Here is the complete content of the current webpage:\n\n${extractedText}\n\nPlease answer my question based on this webpage content.`
+          },
+          {
+            role: 'assistant' as const,
+            content: settings.language === 'chinese'
+              ? '我已经阅读了网页内容，请告诉我您想了解什么？'
+              : 'I have read the webpage content. What would you like to know?'
+          }
+        ] : summary ? [
+          {
+            role: 'user' as const,
+            content: settings.language === 'chinese'
+              ? `以下是网页的摘要：\n\n${summary}\n\n请基于这个摘要回答我的问题。`
+              : `Here is the summary of the webpage:\n\n${summary}\n\nPlease answer my question based on this summary.`
+          },
+          {
+            role: 'assistant' as const,
+            content: settings.language === 'chinese'
+              ? '我已经阅读了网页摘要，请告诉我您想了解什么？'
+              : 'I have read the webpage summary. What would you like to know?'
+          }
+        ] : []),
+        ...chatMessages.map(msg => ({
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content
+        })),
+        {
+          role: 'user' as const,
+          content: message
+        }
+      ];
+
+      const response = await chrome.runtime.sendMessage({
+        action: 'chatMessage',
+        data: {
+          messages: conversationHistory,
+          model: settings.model,
+          apiKey: settings.apiKey,
+          apiUrl: settings.apiUrl,
+          virtualKey: settings.virtualKey,
+          language: settings.language,
+          customPrompts: settings.customPrompts
+        }
+      });
+
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
+      const assistantMessage: ChatMessage = {
+        id: `assistant_${Date.now()}`,
+        role: 'assistant',
+        content: response.summary,
+        timestamp: Date.now()
+      };
+
+      setChatMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMessage: ChatMessage = {
+        id: `error_${Date.now()}`,
+        role: 'assistant',
+        content: error instanceof Error ? error.message : 'Failed to get response',
+        timestamp: Date.now()
+      };
+      setChatMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendChatMessage(chatInput);
+  };
+
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  // Initialize chat with summary when it's first loaded (optional)
+  useEffect(() => {
+    console.log('Summary state changed:', { 
+      hasSummary: !!summary, 
+      summaryLength: summary?.length || 0, 
+      chatMessagesLength: chatMessages.length 
+    });
+    
+    // Only initialize with summary if there are no existing chat messages
+    // This allows users to start chatting without getting a summary first
+    if (summary && chatMessages.length === 0) {
+      console.log('Initializing chat with summary:', summary.substring(0, 100) + '...');
+      const initialMessage: ChatMessage = {
+        id: 'initial_summary',
+        role: 'assistant',
+        content: summary,
+        timestamp: Date.now()
+      };
+      setChatMessages([initialMessage]);
+    }
+  }, [summary]); // Only depend on summary, not chatMessages.length
+
+  // Function to extract text from current page without summarizing
+  const extractPageText = async () => {
+    if (!currentTab || !currentTab.id) {
+      setError('No suitable tab found. Please navigate to a webpage and try again.');
+      return;
+    }
+
+    if (!currentTab.url || 
+        currentTab.url.startsWith('chrome://') || 
+        currentTab.url.startsWith('chrome-extension://') ||
+        currentTab.url.startsWith('moz-extension://')) {
+      setError('Cannot extract text from this page. Please navigate to a regular webpage.');
+      return;
+    }
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: 'extractTabText',
+        tabId: currentTab.id
+      });
+
+      if (!response || response.length === 0) {
+        throw new Error('Could not extract text from the page. The page might be empty or blocked.');
+      }
+
+      if (response.length < 50) {
+        throw new Error('Page content is too short to extract meaningfully.');
+      }
+
+      // Store the extracted text for use in chat context
+      setExtractedText(response);
+      setError('');
+      
+      // Initialize chat with a message indicating we have page content
+      if (chatMessages.length === 0) {
+        const initialMessage: ChatMessage = {
+          id: 'page_content_loaded',
+          role: 'assistant',
+          content: settings.language === 'chinese' 
+            ? '我已经加载了当前网页的内容，您可以询问任何关于这个网页的问题。'
+            : 'I have loaded the content of the current webpage. You can ask any questions about this page.',
+          timestamp: Date.now()
+        };
+        setChatMessages([initialMessage]);
+      }
+    } catch (error) {
+      console.error('Text extraction error:', error);
+      setError(error instanceof Error ? error.message : 'Text extraction failed');
+    }
+  };
+
   return (
     <div className="w-[800px] min-w-[700px] max-w-[800px] min-h-[500px] bg-white flex flex-col overflow-hidden box-border">
       {/* Header */}
@@ -487,6 +693,7 @@ const Popup: React.FC = () => {
               <div className="flex-1">
                 <div className="flex gap-2">
                   <button
+                    title="Summarize the current webpage"
                     onClick={() => {
                       if (isLoading && currentRequestId) {
                         // Cancel current request
@@ -513,7 +720,7 @@ const Popup: React.FC = () => {
                           ? cacheInfo?.fromCache
                             ? 'bg-green-600 hover:bg-green-700 text-white border-2 border-green-500'
                             : 'bg-blue-600 hover:bg-blue-700 text-white border-2 border-blue-500'
-                          : 'bg-blue-600 hover:bg-blue-700 text-white'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
                     }`}
                   >
                     {isLoading ? (
@@ -534,8 +741,23 @@ const Popup: React.FC = () => {
                         </>
                       )
                     ) : (
-                      'Summarize Page'
+                      <>
+                        <span>📝</span>
+                        <span>Summarize Page</span>
+                      </>
                     )}
+                  </button>
+                  <button
+                    onClick={extractPageText}
+                    disabled={isLoading}
+                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors h-10 flex items-center justify-center ${
+                      extractedText
+                        ? 'bg-green-500 hover:bg-green-600 text-white'
+                        : 'bg-gray-500 hover:bg-gray-600 text-white'
+                    } disabled:bg-gray-300 disabled:cursor-not-allowed`}
+                    title={extractedText ? 'Page content loaded' : 'Load page content for chat'}
+                  >
+                    {extractedText ? '✓' : '📄'}
                   </button>
                   {isLoading && (
                     <div className="flex items-center justify-center px-3 bg-blue-50 rounded-md">
@@ -546,17 +768,103 @@ const Popup: React.FC = () => {
               </div>
             </div>
 
-            {/* Summary Result */}
-            {summary && (
-              <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-0">
-                <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 rounded-t-lg">
-                  <h3 className="text-sm font-medium text-gray-900 m-0">Summary</h3>
-                </div>
-                <div className="flex-1 p-3 overflow-y-auto min-h-0">
-                  {renderSummary()}
-                </div>
+            {/* Chat Interface */}
+            <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-0">
+              <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 rounded-t-lg">
+                <h3 className="text-sm font-medium text-gray-900 m-0">Chat about this page</h3>
               </div>
-            )}
+              
+              {/* Chat Messages */}
+              <div 
+                ref={chatContainerRef}
+                className="flex-1 p-3 overflow-y-auto min-h-0 space-y-3"
+              >
+                {!summary && !extractedText && !isLoading && chatMessages.length === 0 && (
+                  <div className="flex justify-center items-center h-full">
+                    <div className="text-gray-500 text-sm text-center">
+                      <div className="mb-2">
+                        {settings.language === 'chinese' ? '欢迎使用AI助手！' : 'Welcome to AI Assistant!'}
+                      </div>
+                      <div className="mb-2">
+                        {settings.language === 'chinese' ? '您可以开始聊天或获取页面内容' : 'You can start chatting or get page content'}
+                      </div>
+                      <div className="text-xs">
+                        {settings.language === 'chinese' 
+                          ? '📄 加载页面内容 | 📝 获取页面摘要' 
+                          : '📄 Load page content | 📝 Get page summary'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {isLoading && (
+                  <div className="flex justify-center items-center h-full">
+                    <div className="text-gray-500 text-sm flex items-center space-x-2">
+                      <span className="inline-block animate-spin">⟳</span>
+                      <span>{settings.language === 'chinese' ? '正在生成摘要...' : 'Generating summary...'}</span>
+                    </div>
+                  </div>
+                )}
+                
+                {chatMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                        message.role === 'user'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-100 text-gray-900'
+                      }`}
+                    >
+                      {message.role === 'assistant' && message.id === 'initial_summary' ? (
+                        <div className="prose prose-sm max-w-none">
+                          <div 
+                            className="prose prose-sm max-w-none"
+                            dangerouslySetInnerHTML={{ __html: marked.parse(message.content) as string }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap">{message.content}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                
+                {isChatLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm">
+                      <div className="flex items-center space-x-2">
+                        <span className="inline-block animate-spin">⟳</span>
+                        <span>Thinking...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input */}
+              <div className="border-t border-gray-200 p-3">
+                <form onSubmit={handleChatSubmit} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder={settings.language === 'chinese' ? '输入您的问题...' : 'Ask a question...'}
+                    disabled={isChatLoading}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatInput.trim() || isChatLoading}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-md text-sm font-medium hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {settings.language === 'chinese' ? '发送' : 'Send'}
+                  </button>
+                </form>
+              </div>
+            </div>
 
             {/* Error Message */}
             {error && (

@@ -47,6 +47,32 @@ interface LLMRequest {
   };
 }
 
+interface ChatRequest {
+  messages: Array<{
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+  }>;
+  model: 'claude' | 'openai' | 'portkey';
+  apiKey: string;
+  apiUrl?: string;
+  virtualKey?: string;
+  language?: 'chinese' | 'english';
+  customPrompts?: {
+    chinese: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+    english: {
+      systemPrompt: string;
+      userPrompt: string;
+      temperature: number;
+      maxTokens: number;
+    };
+  };
+}
+
 interface LLMResponse {
   summary: string;
   error?: string;
@@ -614,6 +640,261 @@ class BackgroundService {
   async clearCache() {
     return await SummaryCache.clear();
   }
+
+  async callChatAPI(request: ChatRequest): Promise<LLMResponse> {
+    try {
+      const { messages, model, apiKey, apiUrl, virtualKey, language = 'chinese', customPrompts } = request;
+
+      console.log('Chat API called with:', { model, language, messageCount: messages.length });
+
+      let apiResponse: LLMResponse;
+
+      if (model === 'claude') {
+        console.log('Using Anthropic Claude API for chat');
+        apiResponse = await this.callClaudeChatAPI(messages, apiKey, language, customPrompts);
+      } else if (model === 'portkey') {
+        console.log('Using Portkey API for chat');
+        apiResponse = await this.callPortkeyChatAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+      } else {
+        console.log('Using OpenRouter API for chat');
+        apiResponse = await this.callOpenRouterChatAPI(messages, model, apiKey, apiUrl, language, customPrompts);
+      }
+
+      return apiResponse;
+    } catch (error) {
+      console.error('Chat API call failed:', error);
+      return {
+        summary: '',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private async callClaudeChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+    const endpoint = 'https://api.anthropic.com/v1/messages';
+
+    // Get prompt configuration for chat
+    const promptConfig = this.getPromptConfig(language, customPrompts);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: promptConfig.maxTokens,
+          messages: messages
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
+        const statusCode = response.status;
+        const statusText = response.statusText;
+
+        throw new Error(`Claude API request failed (${statusCode} ${statusText}): ${errorDetails}`);
+      }
+
+      const data = await response.json();
+      const summary = data.content?.[0]?.text || 'No response generated';
+      return { summary };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(`Network error: Unable to connect to Claude API. Check your internet connection.`);
+      }
+      throw error;
+    }
+  }
+
+  private async callOpenRouterChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+    const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
+
+    const modelMap = {
+      'claude': 'anthropic/claude-sonnet-4-20250514',
+      'openai': 'openai/gpt-4'
+    };
+
+    // Get prompt configuration for chat
+    const promptConfig = this.getPromptConfig(language, customPrompts);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': chrome.runtime.getURL(''),
+          'X-Title': 'AI Page Summarizer'
+        },
+        body: JSON.stringify({
+          model: modelMap[model],
+          messages: messages,
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
+        const statusCode = response.status;
+        const statusText = response.statusText;
+
+        let enhancedError = `API request failed (${statusCode} ${statusText}): ${errorDetails}`;
+
+        if (statusCode === 401) {
+          enhancedError += '\n\nTip: Check if your API key is valid and active.';
+        } else if (statusCode === 429) {
+          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
+        } else if (statusCode >= 500) {
+          enhancedError += '\n\nTip: This is a server error. The API service may be temporarily unavailable.';
+        }
+
+        throw new Error(enhancedError);
+      }
+
+      const data = await response.json();
+      const summary = data.choices?.[0]?.message?.content || 'No response generated';
+      return { summary };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(`Network error: Unable to connect to API endpoint. Check your internet connection and URL: ${endpoint}`);
+      }
+      throw error;
+    }
+  }
+
+  private async callPortkeyChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+    try {
+      // Try SDK approach first
+      try {
+        const portkeyConfig: any = {
+          apiKey: apiKey
+        };
+
+        // Add virtual key if provided
+        if (virtualKey) {
+          portkeyConfig.virtualKey = virtualKey;
+        }
+
+        // Add custom base URL if provided
+        if (apiUrl) {
+          portkeyConfig.baseURL = apiUrl;
+        }
+
+        const portkey = new Portkey(portkeyConfig);
+
+        // Get prompt configuration for chat
+        const promptConfig = this.getPromptConfig(language, customPrompts);
+
+        // Create chat completion using SDK
+        const response = await portkey.chat.completions.create({
+          messages: messages,
+          model: 'gpt-4', // Default model, can be overridden by virtual key
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
+        });
+
+        const summary = response.choices?.[0]?.message?.content?.toString() || 'No response generated';
+        return { summary };
+      } catch (sdkError: any) {
+        // If SDK fails, fall back to direct API call
+        console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
+        return await this.callPortkeyDirectChatAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+      }
+    } catch (error: any) {
+      // Handle SDK-specific errors
+      let errorMessage = 'Portkey API request failed';
+      
+      if (error?.status) {
+        const statusCode = error.status;
+        const errorDetails = error.message || error.error?.message || 'Unknown error';
+        
+        errorMessage = `Portkey API request failed (${statusCode}): ${errorDetails}`;
+
+        if (statusCode === 401) {
+          errorMessage += '\n\nTip: Check if your Portkey API key is valid and active.';
+        } else if (statusCode === 403) {
+          errorMessage += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
+        } else if (statusCode === 429) {
+          errorMessage += '\n\nTip: You have hit rate limits. Please wait before trying again.';
+        } else if (statusCode >= 500) {
+          errorMessage += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
+        }
+      } else if (error?.message) {
+        errorMessage += `: ${error.message}`;
+      }
+
+      throw new Error(errorMessage);
+    }
+  }
+
+  private async callPortkeyDirectChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+    const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
+
+    try {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Title': 'AI Page Summarizer'
+      };
+
+      // Add virtual key if provided
+      if (virtualKey) {
+        headers['x-portkey-virtual-key'] = virtualKey;
+      }
+
+      // Get prompt configuration for chat
+      const promptConfig = this.getPromptConfig(language, customPrompts);
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'gpt-4', // Default model, can be overridden by virtual key
+          messages: messages,
+          max_tokens: promptConfig.maxTokens,
+          temperature: promptConfig.temperature
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
+        const statusCode = response.status;
+        const statusText = response.statusText;
+
+        let enhancedError = `Portkey API request failed (${statusCode} ${statusText}): ${errorDetails}`;
+
+        if (statusCode === 401) {
+          enhancedError += '\n\nTip: Check if your Portkey API key is valid and active.';
+        } else if (statusCode === 403) {
+          enhancedError += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
+        } else if (statusCode === 429) {
+          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
+        } else if (statusCode >= 500) {
+          enhancedError += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
+        }
+
+        throw new Error(enhancedError);
+      }
+
+      const data = await response.json();
+      const summary = data.choices?.[0]?.message?.content || 'No response generated';
+      return { summary };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(`Network error: Unable to connect to Portkey API endpoint. Check your internet connection and URL: ${endpoint}`);
+      }
+      throw error;
+    }
+  }
 }
 
 // Message handling
@@ -663,6 +944,10 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
     case 'clearCache':
       service.clearCache().then(() => sendResponse({ success: true }));
+      return true;
+
+    case 'chatMessage':
+      service.callChatAPI(request.data).then(sendResponse);
       return true;
 
     default:
