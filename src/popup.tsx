@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import './styles.css';
 
 interface Settings {
-  model: 'claude' | 'openai' | 'portkey';
+  provider: 'claude' | 'openai' | 'openrouter' | 'portkey';
   modelIdentifier?: string;
   apiKey: string;
   apiUrl?: string;
@@ -46,11 +46,12 @@ type TabType = 'current' | 'all-tabs';
 const Popup: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('current');
   const [currentTab, setCurrentTab] = useState<chrome.tabs.Tab | null>(null);
-  const [settings, setSettings] = useState<Settings>({ 
-    model: 'claude', 
-    apiKey: '', 
+  const [settings, setSettings] = useState<Settings>({
+    provider: 'claude',
+    modelIdentifier: 'claude-sonnet-4-20250514',
+    apiKey: '',
     virtualKey: '',
-    language: 'chinese' 
+    language: 'chinese'
   });
   const [summary, setSummary] = useState<string>('');
   const [extractedText, setExtractedText] = useState<string>(''); // Store the extracted text
@@ -60,20 +61,20 @@ const Popup: React.FC = () => {
   const [cacheInfo, setCacheInfo] = useState<{fromCache: boolean; cachedAt?: number} | null>(null);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  
+
   // Chat interface state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  
+
 
   useEffect(() => {
     loadSettings();
     loadCurrentTab();
     loadAllTabs();
     loadPersistentState();
-    
+
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
@@ -88,7 +89,7 @@ const Popup: React.FC = () => {
       const timer = setTimeout(() => {
         summarizeCurrentPage(false); // Allow cache on initial load
       }, 300);
-      
+
       return () => clearTimeout(timer);
     }
   }, [currentTab, settings.apiKey]);
@@ -97,7 +98,38 @@ const Popup: React.FC = () => {
     try {
       const result = await chrome.storage.local.get(['settings']);
       if (result.settings) {
-        setSettings(prev => ({ ...prev, ...result.settings }));
+        const loadedSettings = result.settings;
+
+        const provider = loadedSettings.provider || 'claude';
+
+        // Ensure modelIdentifier is set correctly based on the provider
+        let modelIdentifier = loadedSettings.modelIdentifier;
+        if (!modelIdentifier) {
+          // Set default model identifier based on the provider
+          switch (provider) {
+            case 'claude':
+              modelIdentifier = 'claude-sonnet-4-20250514';
+              break;
+            case 'openai':
+              modelIdentifier = 'gpt-4';
+              break;
+            case 'openrouter':
+              modelIdentifier = 'openai/gpt-4';
+              break;
+            case 'portkey':
+              modelIdentifier = 'gpt-4';
+              break;
+            default:
+              modelIdentifier = 'gpt-4';
+          }
+        }
+
+        setSettings(prev => ({
+          ...prev,
+          ...loadedSettings,
+          provider,
+          modelIdentifier
+        }));
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -144,7 +176,7 @@ const Popup: React.FC = () => {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
     }
-    
+
     pollIntervalRef.current = setInterval(async () => {
       try {
         const status = await chrome.runtime.sendMessage({
@@ -153,19 +185,17 @@ const Popup: React.FC = () => {
         });
 
         if (status) {
-                  if (status.status === 'completed' && status.result) {
-          setIsLoading(false);
-          console.log('Summary received:', status.result.summary.substring(0, 100) + '...');
-          console.log('Setting summary, chatMessages should be empty now');
-          setSummary(status.result.summary);
-          setCacheInfo({
-            fromCache: status.result.fromCache || false,
-            cachedAt: status.result.cachedAt
-          });
-          setError('');
-          setCurrentRequestId(null);
-          clearPersistentState();
-            
+          if (status.status === 'completed' && status.result) {
+            setIsLoading(false);
+            setSummary(status.result.summary);
+            setCacheInfo({
+              fromCache: status.result.fromCache || false,
+              cachedAt: status.result.cachedAt
+            });
+            setError('');
+            setCurrentRequestId(null);
+            clearPersistentState();
+
             if (pollIntervalRef.current) {
               clearInterval(pollIntervalRef.current);
               pollIntervalRef.current = null;
@@ -175,7 +205,7 @@ const Popup: React.FC = () => {
             setError(status.error || 'Request failed');
             setCurrentRequestId(null);
             clearPersistentState();
-            
+
             if (pollIntervalRef.current) {
               clearInterval(pollIntervalRef.current);
               pollIntervalRef.current = null;
@@ -188,7 +218,7 @@ const Popup: React.FC = () => {
           setError('Request not found - it may have expired');
           setCurrentRequestId(null);
           clearPersistentState();
-          
+
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
@@ -205,17 +235,17 @@ const Popup: React.FC = () => {
     try {
       // Try multiple approaches to find the active tab
       let activeTab = null;
-      
+
       // First try: Get active tab from the current window
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
           activeTab = tab;
         }
-      } catch (e) {
-        console.log('Method 1 failed:', e);
+      } catch {
+        // Failed to get active tab from current window
       }
-      
+
       // Second try: Get active tab from any normal window
       if (!activeTab) {
         try {
@@ -223,18 +253,18 @@ const Popup: React.FC = () => {
           if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
             activeTab = tab;
           }
-        } catch (e) {
-          console.log('Method 2 failed:', e);
+        } catch {
+          // Failed to get active tab from normal window
         }
       }
-      
+
       // Third try: Get the last active tab from normal windows
       if (!activeTab) {
         try {
           const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
           for (const window of windows) {
             if (window.tabs) {
-              const tab = window.tabs.find(t => t.active && t.url && 
+              const tab = window.tabs.find(t => t.active && t.url &&
                 !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://'));
               if (tab) {
                 activeTab = tab;
@@ -242,25 +272,24 @@ const Popup: React.FC = () => {
               }
             }
           }
-        } catch (e) {
-          console.log('Method 3 failed:', e);
+        } catch {
+          // Failed to get last active tab from normal windows
         }
       }
-      
+
       // Fourth try: Get any valid tab if still no active tab found
       if (!activeTab) {
         try {
           const tabs = await chrome.tabs.query({});
-          activeTab = tabs.find(tab => tab.url && 
-            !tab.url.startsWith('chrome://') && 
+          activeTab = tabs.find(tab => tab.url &&
+            !tab.url.startsWith('chrome://') &&
             !tab.url.startsWith('chrome-extension://') &&
             !tab.url.startsWith('moz-extension://'));
-        } catch (e) {
-          console.log('Method 4 failed:', e);
+        } catch {
+          // Failed to get any valid tab
         }
       }
-      
-      console.log('Active tab found:', activeTab);
+
       setCurrentTab(activeTab || null);
     } catch (error) {
       console.error('Error loading current tab:', error);
@@ -279,15 +308,15 @@ const Popup: React.FC = () => {
   const summarizeCurrentPage = async (forceFresh: boolean = false) => {
     // Refresh current tab info before attempting summarization
     await loadCurrentTab();
-    
+
     if (!currentTab || !currentTab.id) {
       setError('No suitable tab found. Please navigate to a webpage and try again.');
       return;
     }
 
     // Check if the tab URL is valid for summarization
-    if (!currentTab.url || 
-        currentTab.url.startsWith('chrome://') || 
+    if (!currentTab.url ||
+        currentTab.url.startsWith('chrome://') ||
         currentTab.url.startsWith('chrome-extension://') ||
         currentTab.url.startsWith('moz-extension://')) {
       setError('Cannot summarize this page. Please navigate to a regular webpage.');
@@ -311,7 +340,7 @@ const Popup: React.FC = () => {
     setExtractedText(''); // Clear extracted text when starting new summary
     setCacheInfo(null);
     setChatMessages([]); // Clear chat messages when starting new summary
-    
+
     // Clear conversation context in background
     if (currentTab?.id) {
       chrome.runtime.sendMessage({
@@ -346,7 +375,7 @@ const Popup: React.FC = () => {
         forceFresh: forceFresh,
         data: {
           text: response,
-          model: settings.model,
+          provider: settings.provider,
           modelIdentifier: settings.modelIdentifier,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
@@ -362,10 +391,10 @@ const Popup: React.FC = () => {
 
       const requestId = startResponse.requestId;
       setCurrentRequestId(requestId);
-      
+
       // Save state for persistence
       await savePersistentState(requestId, currentTab.url);
-      
+
       // Start polling for results
       startPollingRequest(requestId);
 
@@ -395,32 +424,13 @@ const Popup: React.FC = () => {
     }
   };
 
-
-
-  const renderSummary = () => {
-    if (!summary) return null;
-
-    try {
-      const htmlContent = marked.parse(summary) as string;
-      return (
-        <div 
-          className="prose prose-sm max-w-none"
-          dangerouslySetInnerHTML={{ __html: htmlContent }}
-        />
-      );
-    } catch (error) {
-      console.error('Markdown parsing error:', error);
-      return <div className="whitespace-pre-wrap">{summary}</div>;
-    }
-  };
-
   const formatCacheTime = (timestamp: number): string => {
     const date = new Date(timestamp);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    
+
     if (diffMins < 1) {
       return 'Just now';
     } else if (diffMins < 60) {
@@ -434,7 +444,9 @@ const Popup: React.FC = () => {
 
   // Chat functions
   const sendChatMessage = async (message: string) => {
-    if (!message.trim() || !settings.apiKey) return;
+    if (!message.trim() || !settings.apiKey) {
+return;
+}
 
     const userMessage: ChatMessage = {
       id: `user_${Date.now()}`,
@@ -450,15 +462,15 @@ const Popup: React.FC = () => {
     try {
       // Build conversation history including the initial webpage context
       const conversationHistory = [];
-      
+
       // Always include a system message
       conversationHistory.push({
         role: 'system' as const,
-        content: settings.language === 'chinese' 
+        content: settings.language === 'chinese'
           ? '你是一个有用的助手，可以回答各种问题。如果用户提供了网页内容，请基于网页内容回答问题。'
           : 'You are a helpful assistant that can answer various questions. If the user provides webpage content, answer questions based on that content.'
       });
-      
+
       // Always include the webpage context if available
       if (extractedText) {
         conversationHistory.push({
@@ -467,7 +479,7 @@ const Popup: React.FC = () => {
             ? `以下是当前网页的完整内容：\n\n${extractedText}\n\n请基于这个网页内容回答我的问题。`
             : `Here is the complete content of the current webpage:\n\n${extractedText}\n\nPlease answer my questions based on this webpage content.`
         });
-        
+
         // Only add the "I have read" message for the first interaction
         if (chatMessages.length === 0) {
           conversationHistory.push({
@@ -484,7 +496,7 @@ const Popup: React.FC = () => {
             ? `以下是网页的摘要：\n\n${summary}\n\n请基于这个摘要回答我的问题。`
             : `Here is the summary of the webpage:\n\n${summary}\n\nPlease answer my questions based on this summary.`
         });
-        
+
         // Only add the "I have read" message for the first interaction
         if (chatMessages.length === 0) {
           conversationHistory.push({
@@ -495,7 +507,7 @@ const Popup: React.FC = () => {
           });
         }
       }
-      
+
       // Add all previous chat messages
       chatMessages.forEach(msg => {
         conversationHistory.push({
@@ -503,7 +515,7 @@ const Popup: React.FC = () => {
           content: msg.content
         });
       });
-      
+
       // Add the current user message
       conversationHistory.push({
         role: 'user' as const,
@@ -515,7 +527,7 @@ const Popup: React.FC = () => {
         tabId: currentTab?.id,
         data: {
           messages: conversationHistory,
-          model: settings.model,
+          provider: settings.provider,
           modelIdentifier: settings.modelIdentifier,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
@@ -559,7 +571,7 @@ const Popup: React.FC = () => {
   const clearChat = async () => {
     setChatMessages([]);
     setChatInput('');
-    
+
     // Clear conversation context in background
     if (currentTab?.id) {
       try {
@@ -567,7 +579,6 @@ const Popup: React.FC = () => {
           action: 'clearConversationContext',
           tabId: currentTab.id
         });
-        console.log('Cleared conversation context for tab', currentTab.id);
       } catch (error) {
         console.error('Failed to clear conversation context:', error);
       }
@@ -583,16 +594,10 @@ const Popup: React.FC = () => {
 
   // Initialize chat with summary when it's first loaded (optional)
   useEffect(() => {
-    console.log('Summary state changed:', { 
-      hasSummary: !!summary, 
-      summaryLength: summary?.length || 0, 
-      chatMessagesLength: chatMessages.length 
-    });
-    
+
     // Only initialize with summary if there are no existing chat messages
     // This allows users to start chatting without getting a summary first
     if (summary && chatMessages.length === 0) {
-      console.log('Initializing chat with summary:', summary.substring(0, 100) + '...');
       const initialMessage: ChatMessage = {
         id: 'initial_summary',
         role: 'assistant',
@@ -610,8 +615,8 @@ const Popup: React.FC = () => {
       return;
     }
 
-    if (!currentTab.url || 
-        currentTab.url.startsWith('chrome://') || 
+    if (!currentTab.url ||
+        currentTab.url.startsWith('chrome://') ||
         currentTab.url.startsWith('chrome-extension://') ||
         currentTab.url.startsWith('moz-extension://')) {
       setError('Cannot extract text from this page. Please navigate to a regular webpage.');
@@ -635,13 +640,13 @@ const Popup: React.FC = () => {
       // Store the extracted text for use in chat context
       setExtractedText(response);
       setError('');
-      
+
       // Initialize chat with a message indicating we have page content
       if (chatMessages.length === 0) {
         const initialMessage: ChatMessage = {
           id: 'page_content_loaded',
           role: 'assistant',
-          content: settings.language === 'chinese' 
+          content: settings.language === 'chinese'
             ? '我已经加载了当前网页的内容，您可以询问任何关于这个网页的问题。'
             : 'I have loaded the content of the current webpage. You can ask any questions about this page.',
           timestamp: Date.now()
@@ -738,7 +743,7 @@ const Popup: React.FC = () => {
                   <option value="english">English</option>
                 </select>
               </div>
-              
+
               <div className="flex-1">
                 <div className="flex gap-2">
                   <button
@@ -763,9 +768,9 @@ const Popup: React.FC = () => {
                       }
                     }}
                     className={`flex-1 font-medium py-2 px-4 rounded-md text-sm transition-colors h-10 flex items-center justify-center gap-2 ${
-                      isLoading 
+                      isLoading
                         ? 'bg-red-500 hover:bg-red-600 text-white'
-                        : summary 
+                        : summary
                           ? cacheInfo?.fromCache
                             ? 'bg-green-600 hover:bg-green-700 text-white border-2 border-green-500'
                             : 'bg-blue-600 hover:bg-blue-700 text-white border-2 border-blue-500'
@@ -831,9 +836,9 @@ const Popup: React.FC = () => {
                   </button>
                 )}
               </div>
-              
+
               {/* Chat Messages */}
-              <div 
+              <div
                 ref={chatContainerRef}
                 className="flex-1 p-3 overflow-y-auto min-h-0 space-y-3"
               >
@@ -847,14 +852,14 @@ const Popup: React.FC = () => {
                         {settings.language === 'chinese' ? '您可以开始聊天或获取页面内容' : 'You can start chatting or get page content'}
                       </div>
                       <div className="text-xs">
-                        {settings.language === 'chinese' 
-                          ? '📄 加载页面内容 | 📝 获取页面摘要' 
+                        {settings.language === 'chinese'
+                          ? '📄 加载页面内容 | 📝 获取页面摘要'
                           : '📄 Load page content | 📝 Get page summary'}
                       </div>
                     </div>
                   </div>
                 )}
-                
+
                 {isLoading && (
                   <div className="flex justify-center items-center h-full">
                     <div className="text-gray-500 text-sm flex items-center space-x-2">
@@ -863,7 +868,7 @@ const Popup: React.FC = () => {
                     </div>
                   </div>
                 )}
-                
+
                 {chatMessages.map((message) => (
                   <div
                     key={message.id}
@@ -878,7 +883,7 @@ const Popup: React.FC = () => {
                     >
                       {message.role === 'assistant' && message.id === 'initial_summary' ? (
                         <div className="prose prose-sm max-w-none">
-                          <div 
+                          <div
                             className="prose prose-sm max-w-none"
                             dangerouslySetInnerHTML={{ __html: marked.parse(message.content) as string }}
                           />
@@ -889,7 +894,7 @@ const Popup: React.FC = () => {
                     </div>
                   </div>
                 ))}
-                
+
                 {isChatLoading && (
                   <div className="flex justify-start">
                     <div className="bg-gray-100 text-gray-900 rounded-lg px-3 py-2 text-sm">

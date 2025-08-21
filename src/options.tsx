@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 
 interface Settings {
-  model: 'claude' | 'openai' | 'portkey';
+  provider: 'claude' | 'openai' | 'openrouter' | 'portkey';
   modelIdentifier?: string; // Configurable model identifier
   apiKey: string;
   apiUrl?: string;
@@ -35,12 +35,12 @@ interface CacheStats {
   totalSizeFormatted: string;
   oldestEntry?: string;
   newestEntry?: string;
-  entries: Array<{url: string; language: string; timestamp: string; model: string; sizeBytes: number}>;
+  entries: Array<{url: string; language: string; timestamp: string; provider: string; sizeBytes: number}>;
 }
 
 const Options: React.FC = () => {
   const [settings, setSettings] = useState<Settings>({
-    model: 'claude',
+    provider: 'claude',
     modelIdentifier: 'claude-sonnet-4-20250514', // Default model identifier
     apiKey: '',
     virtualKey: '',
@@ -77,7 +77,13 @@ const Options: React.FC = () => {
     try {
       const result = await chrome.storage.local.get(['settings']);
       if (result.settings) {
-        setSettings(prev => ({ ...prev, ...result.settings }));
+        const loadedSettings = result.settings;
+        const provider = loadedSettings.provider || 'claude';
+        setSettings(prev => ({
+          ...prev,
+          ...loadedSettings,
+          provider
+        }));
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -101,13 +107,13 @@ const Options: React.FC = () => {
     }
 
     setIsTestingApi(true);
-    
+
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'summarizeText',
         data: {
           text: 'This is a test message to verify API connectivity.',
-          model: settings.model,
+          provider: settings.provider,
           modelIdentifier: settings.modelIdentifier,
           apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
@@ -124,12 +130,12 @@ const Options: React.FC = () => {
       showStatus('API connection successful!', 'success');
     } catch (error) {
       console.error('API test failed:', error);
-      
+
       let errorMessage = 'API test failed';
-      
+
       if (error instanceof Error) {
         errorMessage += `:\n\nError: ${error.message}`;
-        
+
         if (error.message.includes('404')) {
           errorMessage += '\n\nThis usually means the API endpoint URL is incorrect.';
         } else if (error.message.includes('401') || error.message.includes('403')) {
@@ -141,14 +147,14 @@ const Options: React.FC = () => {
         } else if (error.message.includes('network') || error.message.includes('fetch')) {
           errorMessage += '\n\nNetwork error. Check your internet connection and firewall settings.';
         }
-        
-        errorMessage += `\n\nDebug Info:`;
-        errorMessage += `\nModel: ${settings.model}`;
+
+        errorMessage += '\n\nDebug Info:';
+        errorMessage += `\nProvider: ${settings.provider}`;
         if (settings.modelIdentifier) {
           errorMessage += `\nModel Identifier: ${settings.modelIdentifier}`;
         }
-        if (settings.model === 'claude') {
-          errorMessage += `\nAPI: Anthropic Claude API`;
+        if (settings.provider === 'claude') {
+          errorMessage += '\nAPI: Anthropic Claude API';
         } else {
           errorMessage += `\nAPI URL: ${settings.apiUrl || 'Default (OpenRouter)'}`;
         }
@@ -156,7 +162,7 @@ const Options: React.FC = () => {
       } else {
         errorMessage += ': Unknown error occurred';
       }
-      
+
       showStatus(errorMessage, 'error');
     } finally {
       setIsTestingApi(false);
@@ -201,7 +207,7 @@ const Options: React.FC = () => {
         maxTokens: 1000
       }
     };
-    
+
     setSettings(prev => ({
       ...prev,
       customPrompts: defaultPrompts
@@ -235,45 +241,49 @@ const Options: React.FC = () => {
         {/* AI Model Section */}
         <div className="bg-gray-50 p-6 rounded-lg">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">AI Model Configuration</h2>
-          
+
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 AI Model Provider
               </label>
               <select
-                value={settings.model}
+                value={settings.provider}
                 onChange={(e) => {
-                  const newModel = e.target.value as 'claude' | 'openai' | 'portkey';
+                  const newProvider = e.target.value as 'claude' | 'openai' | 'openrouter' | 'portkey';
                   let defaultModelIdentifier = '';
-                  
-                  // Set appropriate default model identifier based on selected model
-                  switch (newModel) {
+
+                  // Set appropriate default model identifier based on selected provider
+                  switch (newProvider) {
                     case 'claude':
                       defaultModelIdentifier = 'claude-sonnet-4-20250514';
                       break;
                     case 'openai':
                       defaultModelIdentifier = 'gpt-4';
                       break;
+                    case 'openrouter':
+                      defaultModelIdentifier = 'openai/gpt-4'; // OpenRouter uses provider/model format
+                      break;
                     case 'portkey':
                       defaultModelIdentifier = 'gpt-4'; // Use gpt-4 for Portkey by default
                       break;
                   }
-                  
-                  setSettings(prev => ({ 
-                    ...prev, 
-                    model: newModel,
+
+                  setSettings(prev => ({
+                    ...prev,
+                    provider: newProvider,
                     modelIdentifier: defaultModelIdentifier
                   }));
                 }}
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               >
                 <option value="claude">Claude (Anthropic)</option>
-                <option value="openai">GPT-4 (OpenAI)</option>
-                <option value="portkey">Portkey</option>
+                <option value="openai">OpenAI (Direct)</option>
+                <option value="openrouter">OpenRouter (Gateway)</option>
+                <option value="portkey">Portkey (Gateway)</option>
               </select>
               <p className="mt-2 text-sm text-gray-500">
-                Choose between Claude (Anthropic), GPT-4 (OpenAI), or Portkey for text summarization
+                Choose your AI provider: Direct APIs (Claude, OpenAI) or Gateways (OpenRouter, Portkey)
               </p>
             </div>
 
@@ -286,17 +296,20 @@ const Options: React.FC = () => {
                 value={settings.modelIdentifier || ''}
                 onChange={(e) => setSettings(prev => ({ ...prev, modelIdentifier: e.target.value }))}
                 placeholder={
-                  settings.model === 'claude' ? 'claude-sonnet-4-20250514' :
-                  settings.model === 'openai' ? 'gpt-4' :
+                  settings.provider === 'claude' ? 'claude-sonnet-4-20250514' :
+                  settings.provider === 'openai' ? 'gpt-4' :
+                  settings.provider === 'openrouter' ? 'openai/gpt-4' :
                   'gpt-4'
                 }
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               />
               <p className="mt-2 text-sm text-gray-500">
-                {settings.model === 'claude' ? 
+                {settings.provider === 'claude' ?
                   'Claude model identifier (e.g., claude-sonnet-4-20250514, claude-3-opus-20240229)' :
-                  settings.model === 'openai' ? 
+                  settings.provider === 'openai' ?
                   'OpenAI model identifier (e.g., gpt-4, gpt-4-turbo, gpt-3.5-turbo)' :
+                  settings.provider === 'openrouter' ?
+                  'OpenRouter model with provider prefix (e.g., openai/gpt-4, anthropic/claude-3-5-sonnet)' :
                   'Model identifier for Portkey routing (e.g., gpt-4, claude-3-opus-20240229)'
                 }
               </p>
@@ -315,13 +328,14 @@ const Options: React.FC = () => {
               />
               <p className="mt-2 text-sm text-gray-500">
                 Get your API key from{' '}
-                {settings.model === 'portkey' ? (
-                  <a href="https://app.portkey.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">app.portkey.ai</a>
+                {settings.provider === 'claude' ? (
+                  <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">console.anthropic.com</a>
+                ) : settings.provider === 'openai' ? (
+                  <a href="https://platform.openai.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">platform.openai.com</a>
+                ) : settings.provider === 'openrouter' ? (
+                  <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">openrouter.ai</a>
                 ) : (
-                  <>
-                    <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">openrouter.ai</a> or 
-                    <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">console.anthropic.com</a>
-                  </>
+                  <a href="https://app.portkey.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">app.portkey.ai</a>
                 )}
               </p>
             </div>
@@ -334,7 +348,12 @@ const Options: React.FC = () => {
                 type="text"
                 value={settings.apiUrl || ''}
                 onChange={(e) => setSettings(prev => ({ ...prev, apiUrl: e.target.value }))}
-                placeholder={settings.model === 'portkey' ? 'https://api.portkey.ai/v1/chat/completions' : 'https://openrouter.ai/api/v1/chat/completions'}
+                placeholder={
+                  settings.provider === 'claude' ? 'https://api.anthropic.com/v1/messages' :
+                  settings.provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' :
+                  settings.provider === 'openrouter' ? 'https://openrouter.ai/api/v1/chat/completions' :
+                  'https://api.portkey.ai/v1/chat/completions'
+                }
                 className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
               />
               <p className="mt-2 text-sm text-gray-500">
@@ -342,7 +361,7 @@ const Options: React.FC = () => {
               </p>
             </div>
 
-            {settings.model === 'portkey' && (
+            {settings.provider === 'portkey' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Virtual Key (optional)
@@ -365,7 +384,7 @@ const Options: React.FC = () => {
         {/* Language Section */}
         <div className="bg-gray-50 p-6 rounded-lg">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Language Settings</h2>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Default Summary Language
@@ -395,7 +414,7 @@ const Options: React.FC = () => {
               Reset to Default
             </button>
           </div>
-          
+
           <div className="space-y-4">
             {/* Language Selection */}
             <div>
@@ -420,7 +439,7 @@ const Options: React.FC = () => {
               <h3 className="text-lg font-medium text-gray-900 mb-3">
                 {settings.language === 'chinese' ? '中文 (Chinese)' : 'English'} Prompt Configuration
               </h3>
-              
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -445,7 +464,7 @@ const Options: React.FC = () => {
                         },
                         [settings.language]: {
                           systemPrompt: e.target.value,
-                          userPrompt: prev.customPrompts?.[settings.language]?.userPrompt || (settings.language === 'chinese' 
+                          userPrompt: prev.customPrompts?.[settings.language]?.userPrompt || (settings.language === 'chinese'
                             ? '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}'
                             : 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}'),
                           temperature: prev.customPrompts?.[settings.language]?.temperature || 0.5,
@@ -601,7 +620,7 @@ const Options: React.FC = () => {
         {/* Behavior Section */}
         <div className="bg-gray-50 p-6 rounded-lg">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Extension Behavior</h2>
-          
+
           <div className="flex items-start">
             <div className="flex items-center h-5">
               <input
@@ -626,7 +645,7 @@ const Options: React.FC = () => {
         {/* Cache Configuration Section */}
         <div className="bg-gray-50 p-6 rounded-lg">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Cache Configuration</h2>
-          
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -676,7 +695,7 @@ const Options: React.FC = () => {
               {isLoadingCache ? 'Loading...' : 'Refresh'}
             </button>
           </div>
-          
+
           {cacheStats ? (
             <div className="space-y-4">
               {/* Summary Stats */}
@@ -756,7 +775,7 @@ const Options: React.FC = () => {
         {/* Status Message */}
         {status && (
           <div className={`px-4 py-3 rounded-md text-sm whitespace-pre-line ${
-            status.type === 'success' 
+            status.type === 'success'
               ? 'bg-green-50 border border-green-200 text-green-700'
               : 'bg-red-50 border border-red-200 text-red-700'
           }`}>
@@ -768,7 +787,7 @@ const Options: React.FC = () => {
       {/* Updates Section */}
       <div className="bg-gray-50 p-6 rounded-lg">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Recent Updates</h2>
-        
+
         <div className="space-y-6">
           {/* August 19, 2025 */}
           <div className="border-l-4 border-purple-500 pl-4">

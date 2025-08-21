@@ -33,28 +33,30 @@ class PageTextExtractor {
       {
         acceptNode: (node) => {
           const parent = node.parentElement;
-          if (!parent) return NodeFilter.FILTER_REJECT;
-          
+          if (!parent) {
+            return NodeFilter.FILTER_REJECT;
+          }
+
           // Skip invisible elements
           const style = window.getComputedStyle(parent);
           if (style.display === 'none' || style.visibility === 'hidden') {
             return NodeFilter.FILTER_REJECT;
           }
-          
+
           // Skip ignored tags
           if (this.IGNORED_TAGS.has(parent.tagName)) {
             return NodeFilter.FILTER_REJECT;
           }
-          
+
           return NodeFilter.FILTER_ACCEPT;
         }
       }
     );
 
     const textNodes: string[] = [];
-    let node;
-    
-    while (node = walker.nextNode()) {
+    let node: Node | null;
+
+    while ((node = walker.nextNode())) {
       const text = node.textContent?.trim();
       if (text && text.length > 0) {
         textNodes.push(text);
